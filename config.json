@@ -1,0 +1,6 @@
+{
+  "twitch_channel": "kasunlol",
+  "http_port": 8080,
+  "stream_port": 8081,
+  "tts_voice": "en-US-JennyNeural"
+}

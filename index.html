@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Local TTS Receiver</title>
+    <style>
+        body {
+            background: transparent;
+            color: white;
+            font-family: sans-serif;
+            padding: 20px;
+            overflow: hidden;
+            margin: 0;
+        }
+
+        #controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 12px;
+            padding: 8px 10px;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        #controls label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        #controls input[type="range"] {
+            width: 100px;
+        }
+
+        #controls select,
+        #controls button {
+            font: inherit;
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        #controls button.active {
+            background: rgba(80, 180, 80, 0.45);
+        }
+
+        #controls button.muted {
+            background: rgba(180, 80, 80, 0.55);
+        }
+
+        #log {
+            font-size: 14px;
+            text-shadow: 1px 1px 2px black;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button id="muteBtn" type="button">Mute</button>
+        <label>
+            Volume
+            <input id="volumeSlider" type="range" min="0" max="100" value="80">
+        </label>
+        <label>
+            TTS
+            <select id="ttsMode">
+                <option value="server" selected>Server (Neural)</option>
+                <option value="browser">Browser</option>
+            </select>
+        </label>
+        <label id="voiceWrap">
+            Voice
+            <select id="browserVoice"></select>
+        </label>
+    </div>
+
+    <div id="log">TTS System Active. Awaiting chat events...</div>
+
+    <script>
+        const logDiv = document.getElementById('log');
+        const muteBtn = document.getElementById('muteBtn');
+        const volumeSlider = document.getElementById('volumeSlider');
+        const ttsModeSelect = document.getElementById('ttsMode');
+        const browserVoiceSelect = document.getElementById('browserVoice');
+        const voiceWrap = document.getElementById('voiceWrap');
+
+        const speechQueue = [];
+        let isSpeaking = false;
+        let isMuted = false;
+        let currentAudio = null;
+
+        const settings = {
+            muted: localStorage.getItem('ttsMuted') === 'true',
+            volume: Number(localStorage.getItem('ttsVolume') ?? 80),
+            mode: localStorage.getItem('ttsMode') ?? 'server',
+            voice: localStorage.getItem('ttsVoice') ?? '',
+        };
+
+        isMuted = settings.muted;
+        volumeSlider.value = settings.volume;
+        ttsModeSelect.value = settings.mode;
+
+        function saveSettings() {
+            localStorage.setItem('ttsMuted', String(isMuted));
+            localStorage.setItem('ttsVolume', volumeSlider.value);
+            localStorage.setItem('ttsMode', ttsModeSelect.value);
+            localStorage.setItem('ttsVoice', browserVoiceSelect.value);
+        }
+
+        function updateMuteButton() {
+            muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+            muteBtn.classList.toggle('muted', isMuted);
+        }
+
+        function getVolume() {
+            return Number(volumeSlider.value) / 100;
+        }
+
+        function updateVoiceVisibility() {
+            voiceWrap.style.display = ttsModeSelect.value === 'browser' ? 'inline-flex' : 'none';
+        }
+
+        function loadBrowserVoices() {
+            const voices = window.speechSynthesis.getVoices();
+            browserVoiceSelect.innerHTML = '';
+
+            voices.forEach((voice) => {
+                const option = document.createElement('option');
+                option.value = voice.name;
+                option.textContent = `${voice.name} (${voice.lang})`;
+                browserVoiceSelect.appendChild(option);
+            });
+
+            if (settings.voice) {
+                browserVoiceSelect.value = settings.voice;
+            }
+        }
+
+        window.speechSynthesis.onvoiceschanged = loadBrowserVoices;
+        loadBrowserVoices();
+        updateMuteButton();
+        updateVoiceVisibility();
+
+        muteBtn.addEventListener('click', () => {
+            isMuted = !isMuted;
+            updateMuteButton();
+
+            if (isMuted) {
+                speechQueue.length = 0;
+                window.speechSynthesis.cancel();
+                if (currentAudio) {
+                    currentAudio.pause();
+                    currentAudio = null;
+                }
+                isSpeaking = false;
+            }
+
+            saveSettings();
+        });
+
+        volumeSlider.addEventListener('input', () => {
+            if (currentAudio) {
+                currentAudio.volume = getVolume();
+            }
+            saveSettings();
+        });
+
+        ttsModeSelect.addEventListener('change', () => {
+            updateVoiceVisibility();
+            saveSettings();
+        });
+
+        browserVoiceSelect.addEventListener('change', saveSettings);
+
+        function finishSpeaking() {
+            isSpeaking = false;
+            currentAudio = null;
+            processQueue();
+        }
+
+        async function speakWithServer(text) {
+            const response = await fetch(`http://localhost:8080/api/tts?text=${encodeURIComponent(text)}`);
+            if (!response.ok) {
+                throw new Error(`Server TTS failed (${response.status})`);
+            }
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.volume = getVolume();
+            currentAudio = audio;
+
+            await new Promise((resolve, reject) => {
+                audio.onended = () => {
+                    URL.revokeObjectURL(url);
+                    resolve();
+                };
+                audio.onerror = () => {
+                    URL.revokeObjectURL(url);
+                    reject(new Error('Audio playback failed'));
+                };
+                audio.play().catch(reject);
+            });
+        }
+
+        function speakWithBrowser(text) {
+            return new Promise((resolve, reject) => {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = 1.0;
+                utterance.pitch = 1.0;
+                utterance.volume = getVolume();
+
+                const selectedVoice = window.speechSynthesis
+                    .getVoices()
+                    .find((voice) => voice.name === browserVoiceSelect.value);
+                if (selectedVoice) {
+                    utterance.voice = selectedVoice;
+                }
+
+                utterance.onend = resolve;
+                utterance.onerror = () => reject(new Error('Browser TTS failed'));
+                window.speechSynthesis.speak(utterance);
+            });
+        }
+
+        async function processQueue() {
+            if (isSpeaking || isMuted || speechQueue.length === 0) {
+                return;
+            }
+
+            isSpeaking = true;
+            const messageText = speechQueue.shift();
+
+            try {
+                if (ttsModeSelect.value === 'server') {
+                    await speakWithServer(messageText);
+                } else {
+                    await speakWithBrowser(messageText);
+                }
+            } catch (error) {
+                console.warn(error);
+                if (ttsModeSelect.value === 'server') {
+                    try {
+                        await speakWithBrowser(messageText);
+                    } catch (fallbackError) {
+                        console.warn(fallbackError);
+                    }
+                }
+            } finally {
+                finishSpeaking();
+            }
+        }
+
+        const eventSource = new EventSource('http://localhost:8081');
+
+        eventSource.onmessage = (event) => {
+            if (event.data.startsWith(':')) {
+                return;
+            }
+
+            const data = JSON.parse(event.data);
+            logDiv.innerText = `${data.user}: ${data.text}`;
+
+            if (!isMuted && data.text) {
+                speechQueue.push(data.text);
+                processQueue();
+            }
+        };
+
+        eventSource.onerror = () => {
+            logDiv.innerText = 'Connection to core engine broken. Retrying...';
+        };
+    </script>
+</body>
+</html>
