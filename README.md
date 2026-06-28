@@ -43,6 +43,9 @@ Or double-click `start_tts.bat` on Windows.
 - **Volume** — 0–100%
 - **TTS mode** — Server (Neural) uses edge-tts; Browser uses local speech synthesis
 - **Voice** — visible in Browser mode only
+- **Neural voice** — pick an edge-tts voice when Server mode is selected (English voices shown by default)
+- **Engine log** — live status panel at the bottom of the page (replaces CLI output)
+- **Click to enable TTS** — required once per page load to unlock browser audio
 
 ## OBS tips
 

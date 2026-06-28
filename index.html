@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Local TTS Receiver</title>
     <style>
         body {
@@ -45,21 +48,71 @@
             color: white;
         }
 
-        #controls button.active {
-            background: rgba(80, 180, 80, 0.45);
+        #controls select {
+            max-width: 220px;
         }
 
         #controls button.muted {
             background: rgba(180, 80, 80, 0.55);
         }
 
-        #log {
+        #chatLine {
             font-size: 14px;
             text-shadow: 1px 1px 2px black;
+            margin-bottom: 8px;
+        }
+
+        #engineLog {
+            max-height: 120px;
+            overflow-y: auto;
+            padding: 8px 10px;
+            background: rgba(0, 0, 0, 0.55);
+            border-radius: 8px;
+            font-family: Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.4;
+            text-shadow: 1px 1px 2px black;
+        }
+
+        #engineLog .log-warn {
+            color: #ffb347;
+        }
+
+        #engineLog .log-error {
+            color: #ff6b6b;
+        }
+
+        #enableOverlay {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 10;
+        }
+
+        #enableOverlay.hidden {
+            display: none;
+        }
+
+        #enableOverlay button {
+            font: inherit;
+            font-size: 16px;
+            padding: 14px 24px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            background: rgba(80, 140, 255, 0.85);
+            color: white;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
+    <div id="enableOverlay">
+        <button id="enableAudioBtn" type="button">Click to enable TTS</button>
+    </div>
+
     <div id="controls">
         <button id="muteBtn" type="button">Mute</button>
         <label>
@@ -73,32 +126,45 @@
                 <option value="browser">Browser</option>
             </select>
         </label>
-        <label id="voiceWrap">
-            Voice
+        <label id="serverVoiceWrap">
+            Neural voice
+            <select id="serverVoice"></select>
+        </label>
+        <label id="browserVoiceWrap">
+            Browser voice
             <select id="browserVoice"></select>
         </label>
+        <span id="buildTag" style="opacity:0.6;font-size:11px;">v2</span>
     </div>
 
-    <div id="log">TTS System Active. Awaiting chat events...</div>
+    <div id="chatLine">TTS System Active. Awaiting chat events...</div>
+    <div id="engineLog"></div>
 
     <script>
-        const logDiv = document.getElementById('log');
+        const chatLine = document.getElementById('chatLine');
+        const engineLog = document.getElementById('engineLog');
         const muteBtn = document.getElementById('muteBtn');
         const volumeSlider = document.getElementById('volumeSlider');
         const ttsModeSelect = document.getElementById('ttsMode');
         const browserVoiceSelect = document.getElementById('browserVoice');
-        const voiceWrap = document.getElementById('voiceWrap');
+        const serverVoiceSelect = document.getElementById('serverVoice');
+        const serverVoiceWrap = document.getElementById('serverVoiceWrap');
+        const browserVoiceWrap = document.getElementById('browserVoiceWrap');
+        const enableOverlay = document.getElementById('enableOverlay');
+        const enableAudioBtn = document.getElementById('enableAudioBtn');
 
         const speechQueue = [];
         let isSpeaking = false;
         let isMuted = false;
+        let audioEnabled = false;
         let currentAudio = null;
 
         const settings = {
             muted: localStorage.getItem('ttsMuted') === 'true',
             volume: Number(localStorage.getItem('ttsVolume') ?? 80),
             mode: localStorage.getItem('ttsMode') ?? 'server',
-            voice: localStorage.getItem('ttsVoice') ?? '',
+            browserVoice: localStorage.getItem('ttsBrowserVoice') ?? '',
+            serverVoice: localStorage.getItem('ttsServerVoice') ?? 'en-US-JennyNeural',
         };
 
         isMuted = settings.muted;
@@ -109,7 +175,8 @@
             localStorage.setItem('ttsMuted', String(isMuted));
             localStorage.setItem('ttsVolume', volumeSlider.value);
             localStorage.setItem('ttsMode', ttsModeSelect.value);
-            localStorage.setItem('ttsVoice', browserVoiceSelect.value);
+            localStorage.setItem('ttsBrowserVoice', browserVoiceSelect.value);
+            localStorage.setItem('ttsServerVoice', serverVoiceSelect.value);
         }
 
         function updateMuteButton() {
@@ -122,7 +189,57 @@
         }
 
         function updateVoiceVisibility() {
-            voiceWrap.style.display = ttsModeSelect.value === 'browser' ? 'inline-flex' : 'none';
+            const serverMode = ttsModeSelect.value === 'server';
+            serverVoiceWrap.style.display = serverMode ? 'inline-flex' : 'none';
+            browserVoiceWrap.style.display = serverMode ? 'none' : 'inline-flex';
+        }
+
+        function appendEngineLog(entry) {
+            const line = document.createElement('div');
+            line.className = `log-${entry.level || 'info'}`;
+            line.textContent = `[${entry.time}] ${entry.message}`;
+            engineLog.appendChild(line);
+            engineLog.scrollTop = engineLog.scrollHeight;
+
+            while (engineLog.children.length > 50) {
+                engineLog.removeChild(engineLog.firstChild);
+            }
+        }
+
+        function populateServerVoices(voices) {
+            const englishVoices = voices.filter((voice) => voice.locale.startsWith('en-'));
+            const list = englishVoices.length > 0 ? englishVoices : voices;
+
+            serverVoiceSelect.innerHTML = '';
+            list.forEach((voice) => {
+                const option = document.createElement('option');
+                option.value = voice.name;
+                option.textContent = voice.label;
+                serverVoiceSelect.appendChild(option);
+            });
+
+            if (settings.serverVoice) {
+                serverVoiceSelect.value = settings.serverVoice;
+            }
+            if (!serverVoiceSelect.value && serverVoiceSelect.options.length > 0) {
+                serverVoiceSelect.selectedIndex = 0;
+            }
+        }
+
+        async function loadServerVoices() {
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/voices', { cache: 'no-store' });
+                if (!response.ok) {
+                    throw new Error(`Voice list failed (${response.status})`);
+                }
+                populateServerVoices(await response.json());
+            } catch (error) {
+                appendEngineLog({
+                    time: new Date().toLocaleTimeString(),
+                    level: 'warn',
+                    message: `Voice API unavailable (${error.message}). Waiting for SSE voice list...`,
+                });
+            }
         }
 
         function loadBrowserVoices() {
@@ -136,15 +253,33 @@
                 browserVoiceSelect.appendChild(option);
             });
 
-            if (settings.voice) {
-                browserVoiceSelect.value = settings.voice;
+            if (settings.browserVoice) {
+                browserVoiceSelect.value = settings.browserVoice;
             }
+        }
+
+        async function unlockAudio() {
+            audioEnabled = true;
+            enableOverlay.classList.add('hidden');
+
+            const silent = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIAAANIAAAAQAAAaAAAAD/+1DEAg/wAABpAAAACAAAD/AAAA');
+            silent.volume = 0;
+            try {
+                await silent.play();
+            } catch (error) {
+                console.warn('Silent unlock failed:', error);
+            }
+
+            processQueue();
         }
 
         window.speechSynthesis.onvoiceschanged = loadBrowserVoices;
         loadBrowserVoices();
+        loadServerVoices();
         updateMuteButton();
         updateVoiceVisibility();
+
+        enableAudioBtn.addEventListener('click', unlockAudio);
 
         muteBtn.addEventListener('click', () => {
             isMuted = !isMuted;
@@ -176,6 +311,7 @@
         });
 
         browserVoiceSelect.addEventListener('change', saveSettings);
+        serverVoiceSelect.addEventListener('change', saveSettings);
 
         function finishSpeaking() {
             isSpeaking = false;
@@ -184,7 +320,10 @@
         }
 
         async function speakWithServer(text) {
-            const response = await fetch(`http://localhost:8080/api/tts?text=${encodeURIComponent(text)}`);
+            const voice = encodeURIComponent(serverVoiceSelect.value);
+            const response = await fetch(
+                `http://localhost:8080/api/tts?text=${encodeURIComponent(text)}&voice=${voice}`
+            );
             if (!response.ok) {
                 throw new Error(`Server TTS failed (${response.status})`);
             }
@@ -229,7 +368,7 @@
         }
 
         async function processQueue() {
-            if (isSpeaking || isMuted || speechQueue.length === 0) {
+            if (!audioEnabled || isSpeaking || isMuted || speechQueue.length === 0) {
                 return;
             }
 
@@ -243,12 +382,20 @@
                     await speakWithBrowser(messageText);
                 }
             } catch (error) {
-                console.warn(error);
+                appendEngineLog({
+                    time: new Date().toLocaleTimeString(),
+                    level: 'warn',
+                    message: `Playback issue: ${error.message}`,
+                });
                 if (ttsModeSelect.value === 'server') {
                     try {
                         await speakWithBrowser(messageText);
                     } catch (fallbackError) {
-                        console.warn(fallbackError);
+                        appendEngineLog({
+                            time: new Date().toLocaleTimeString(),
+                            level: 'error',
+                            message: `Fallback TTS failed: ${fallbackError.message}`,
+                        });
                     }
                 }
             } finally {
@@ -264,7 +411,18 @@
             }
 
             const data = JSON.parse(event.data);
-            logDiv.innerText = `${data.user}: ${data.text}`;
+
+            if (data.type === 'log') {
+                appendEngineLog(data);
+                return;
+            }
+
+            if (data.type === 'voices') {
+                populateServerVoices(data.voices);
+                return;
+            }
+
+            chatLine.innerText = `${data.user}: ${data.text}`;
 
             if (!isMuted && data.text) {
                 speechQueue.push(data.text);
@@ -273,7 +431,11 @@
         };
 
         eventSource.onerror = () => {
-            logDiv.innerText = 'Connection to core engine broken. Retrying...';
+            appendEngineLog({
+                time: new Date().toLocaleTimeString(),
+                level: 'warn',
+                message: 'Connection to core engine broken. Retrying...',
+            });
         };
     </script>
 </body>
