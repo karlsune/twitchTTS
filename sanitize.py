@@ -1,5 +1,7 @@
 import re
 
+"""Sanitize chat text by stripping URLs, emojis, and extra whitespace."""
+
 URL_PATTERN = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 EMOJI_PATTERN = re.compile(
     "["
@@ -22,6 +24,7 @@ WHITESPACE_PATTERN = re.compile(r"\s+")
 
 
 def sanitize_chat_text(text: str) -> str:
+    """Remove unsafe or noisy text from Twitch chat messages."""
     cleaned = URL_PATTERN.sub("", text)
     cleaned = EMOJI_PATTERN.sub("", cleaned)
     cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip()

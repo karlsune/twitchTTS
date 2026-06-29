@@ -115,6 +115,7 @@ def get_cached_voices() -> list[dict]:
 
 
 async def preload_voices() -> None:
+    """Warm up the voice list cache before handling HTTP requests."""
     global cached_voices
     try:
         voices = await list_voices()
@@ -216,6 +217,7 @@ async def _listen_to_twitch_chat() -> None:
         user = parts[1].split("!")[0]
         text = sanitize_chat_text(parts[2])
 
+        # Ignore commands, empty chat, and overly long messages.
         if not text or text.startswith("!") or len(text) > 200:
             continue
 
