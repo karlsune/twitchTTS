@@ -72,7 +72,9 @@ async def generate_tts_audio(text: str, voice: str) -> bytes:
     audio = bytearray()
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
-            audio.extend(chunk["data"])
+            data = chunk.get("data")
+            if data is not None:
+                audio.extend(data)
     return bytes(audio)
 
 
