@@ -38,10 +38,6 @@ STREAM_PORT = CONFIG["stream_port"]
 DEFAULT_TTS_VOICE = CONFIG.get("tts_voice", "en-US-JennyNeural")
 
 
-def configure_event_loop() -> None:
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 
 def quiet_connection_errors(loop: asyncio.AbstractEventLoop, context: dict) -> None:
     exc = context.get("exception")
@@ -374,7 +370,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    configure_event_loop()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
