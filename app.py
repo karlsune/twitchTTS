@@ -12,6 +12,7 @@ from pathlib import Path
 
 import edge_tts
 
+from emotes import fetch_emote_names
 from sanitize import sanitize_chat_text
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
@@ -23,6 +24,7 @@ log_lock = threading.Lock()
 main_loop: asyncio.AbstractEventLoop | None = None
 cached_voices: list[dict] | None = None
 voices_lock = threading.Lock()
+third_party_emotes: set[str] = set()
 tts_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="tts")
 
 
@@ -112,6 +114,17 @@ def get_cached_voices() -> list[dict]:
     return voices
 
 
+async def load_third_party_emotes() -> None:
+    """Fetch BTTV/FFZ/7TV emote names off the event loop, best-effort."""
+    global third_party_emotes
+    try:
+        names, info = await asyncio.to_thread(fetch_emote_names, TWITCH_CHANNEL)
+        third_party_emotes = names
+        app_log(f"Emote filter ready: {info}")
+    except Exception as exc:
+        app_log(f"Could not load third-party emotes: {exc}", level="warn")
+
+
 async def preload_voices() -> None:
     """Warm up the voice list cache before handling HTTP requests."""
     global cached_voices
@@ -184,14 +197,74 @@ async def twitch_listener() -> None:
             await asyncio.sleep(5)
 
 
+def parse_irc_line(line: str) -> dict:
+    """Parse a single IRCv3 line into tags/prefix/command/params.
+
+    Handles the optional ``@tag=value;...`` prefix that Twitch sends once
+    ``twitch.tv/tags`` capability is requested.
+    """
+    tags: dict[str, str] = {}
+    rest = line
+
+    if rest.startswith("@"):
+        tag_str, _, rest = rest[1:].partition(" ")
+        for pair in tag_str.split(";"):
+            key, _, value = pair.partition("=")
+            tags[key] = value
+
+    prefix = ""
+    if rest.startswith(":"):
+        prefix, _, rest = rest[1:].partition(" ")
+
+    command, _, params = rest.partition(" ")
+
+    trailing = ""
+    if " :" in params:
+        params, _, trailing = params.partition(" :")
+    elif params.startswith(":"):
+        trailing = params[1:]
+        params = ""
+
+    return {
+        "tags": tags,
+        "prefix": prefix,
+        "command": command,
+        "params": params,
+        "trailing": trailing,
+    }
+
+
+def parse_emote_ranges(emotes_tag: str) -> list[tuple[int, int]]:
+    """Parse the Twitch ``emotes`` tag into a flat list of (start, end).
+
+    Format: ``id:start-end,start-end/id:start-end`` with inclusive indices.
+    """
+    ranges: list[tuple[int, int]] = []
+    if not emotes_tag:
+        return ranges
+    for chunk in emotes_tag.split("/"):
+        _id, _, positions = chunk.partition(":")
+        if not positions:
+            continue
+        for pos in positions.split(","):
+            start_s, _, end_s = pos.partition("-")
+            try:
+                ranges.append((int(start_s), int(end_s)))
+            except ValueError:
+                continue
+    return ranges
+
+
 async def _listen_to_twitch_chat() -> None:
     reader, writer = await asyncio.open_connection("irc.chat.twitch.tv", 6667)
 
+    # Request IRCv3 tags so Twitch tells us the exact emote character ranges.
+    writer.write(b"CAP REQ :twitch.tv/tags\r\n")
     writer.write(b"NICK justinfan12345\r\n")
     writer.write(f"JOIN #{TWITCH_CHANNEL.lower()}\r\n".encode("utf-8"))
     await writer.drain()
 
-    app_log(f"Connected anonymously to #{TWITCH_CHANNEL}")
+    app_log(f"Connected anonymously to #{TWITCH_CHANNEL} (tags enabled)")
 
     while True:
         line = await reader.readline()
@@ -208,15 +281,18 @@ async def _listen_to_twitch_chat() -> None:
         if "PRIVMSG" not in message:
             continue
 
-        parts = message.split(":", 2)
-        if len(parts) < 3:
+        parsed = parse_irc_line(message)
+        if parsed["command"] != "PRIVMSG":
             continue
 
-        user = parts[1].split("!")[0]
-        text = sanitize_chat_text(parts[2])
+        user = parsed["prefix"].split("!")[0] or parsed["tags"].get("display-name", "chat")
+        raw_text = parsed["trailing"]
+        emote_ranges = parse_emote_ranges(parsed["tags"].get("emotes", ""))
+
+        text = sanitize_chat_text(raw_text, emote_ranges, third_party_emotes)
 
         # Ignore commands, empty chat, and overly long messages.
-        if not text or text.startswith("!") or len(text) > 200:
+        if not text or raw_text.startswith("!") or len(text) > 200:
             continue
 
         payload = json.dumps({"type": "chat", "user": user, "text": text})
@@ -358,6 +434,7 @@ async def main() -> None:
 
     app_log("TTS engine starting...")
     threading.Thread(target=start_http_server, daemon=True).start()
+    await load_third_party_emotes()
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", STREAM_PORT)
     app_log(f"Chat stream serving at http://localhost:{STREAM_PORT}")

@@ -1,6 +1,7 @@
 import re
 
-"""Sanitize chat text by stripping URLs, emojis, and extra whitespace."""
+"""Sanitize chat text by stripping URLs, emojis, Twitch/BTTV/FFZ/7TV emotes,
+and extra whitespace before it is spoken aloud."""
 
 URL_PATTERN = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 EMOJI_PATTERN = re.compile(
@@ -23,9 +24,46 @@ EMOJI_PATTERN = re.compile(
 WHITESPACE_PATTERN = re.compile(r"\s+")
 
 
-def sanitize_chat_text(text: str) -> str:
-    """Remove unsafe or noisy text from Twitch chat messages."""
-    cleaned = URL_PATTERN.sub("", text)
+def strip_twitch_emotes(text: str, emote_ranges: list[tuple[int, int]]) -> str:
+    """Remove first-party Twitch emotes using IRC emote character ranges.
+
+    ``emote_ranges`` are inclusive (start, end) indices into the ORIGINAL
+    message string, as provided by the Twitch IRC ``emotes`` tag. Twitch
+    indexes by Unicode code point, which matches Python string indexing.
+    """
+    if not emote_ranges:
+        return text
+
+    keep = [True] * len(text)
+    for start, end in emote_ranges:
+        for i in range(max(0, start), min(len(text), end + 1)):
+            keep[i] = False
+    return "".join(ch for ch, k in zip(text, keep) if k)
+
+
+def strip_named_emotes(text: str, emote_names: set[str] | None) -> str:
+    """Remove whole words that match known BTTV/FFZ/7TV emote names."""
+    if not emote_names:
+        return text
+    words = text.split(" ")
+    kept = [w for w in words if w and w not in emote_names]
+    return " ".join(kept)
+
+
+def sanitize_chat_text(
+    text: str,
+    emote_ranges: list[tuple[int, int]] | None = None,
+    emote_names: set[str] | None = None,
+) -> str:
+    """Remove unsafe or noisy text from Twitch chat messages.
+
+    Order matters: strip first-party Twitch emotes by character range FIRST
+    (while indices still line up with the original text), then URLs, unicode
+    emoji, named third-party emotes, and finally collapse whitespace.
+    """
+    cleaned = strip_twitch_emotes(text, emote_ranges or [])
+    cleaned = URL_PATTERN.sub("", cleaned)
     cleaned = EMOJI_PATTERN.sub("", cleaned)
+    cleaned = strip_named_emotes(cleaned, emote_names)
     cleaned = WHITESPACE_PATTERN.sub(" ", cleaned).strip()
     return cleaned
