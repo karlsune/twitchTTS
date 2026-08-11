@@ -292,7 +292,9 @@ async def _listen_to_twitch_chat() -> None:
         text = sanitize_chat_text(raw_text, emote_ranges, third_party_emotes)
 
         # Ignore commands, empty chat, and overly long messages.
-        if not text or raw_text.startswith("!") or len(text) > 200:
+        # Exception: allow special users (shitemike, dexfer) to bypass restrictions
+        is_special_user = user.lower() in ("shitemike", "dexfer")
+        if not is_special_user and (not text or raw_text.startswith("!") or len(text) > 200):
             continue
 
         payload = json.dumps({"type": "chat", "user": user, "text": text})
