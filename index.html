@@ -6,6 +6,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Local TTS Receiver</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div id="enableOverlay">
@@ -35,11 +36,9 @@
         </label>
     </div>
 
-    <div id="chatLine">TTS System Active. Awaiting chat events...</div>
     <div id="engineLog"></div>
 
     <script>
-        const chatLine = document.getElementById('chatLine');
         const engineLog = document.getElementById('engineLog');
         const muteBtn = document.getElementById('muteBtn');
         const volumeSlider = document.getElementById('volumeSlider');
@@ -99,7 +98,7 @@
             engineLog.appendChild(line);
             engineLog.scrollTop = engineLog.scrollHeight;
 
-            while (engineLog.children.length > 50) {
+            while (engineLog.children.length > 100) {
                 engineLog.removeChild(engineLog.firstChild);
             }
         }
@@ -320,7 +319,11 @@
                 return;
             }
 
-            chatLine.innerText = `${data.user}: ${data.text}`;
+            appendEngineLog({
+                time: new Date().toLocaleTimeString(),
+                level: 'chat',
+                message: `${data.user}: ${data.text}`,
+            });
 
             if (!isMuted && data.text) {
                 speechQueue.push(data.text);

@@ -291,11 +291,20 @@ async def _listen_to_twitch_chat() -> None:
 
         text = sanitize_chat_text(raw_text, emote_ranges, third_party_emotes)
 
-        # Ignore commands, empty chat, and overly long messages.
-        # Exception: allow special users (shitemike, dexfer) to bypass restrictions
+        # Ignore empty or overly long messages.
+        # Special users can send chat without the !tts prefix.
+        # Other users must start messages with !tts.
         is_special_user = user.lower() in ("shitemike", "dexfer")
-        if not is_special_user and (not text or raw_text.startswith("!") or len(text) > 200):
-            continue
+        if is_special_user:
+            if not text or len(text) > 200:
+                continue
+        else:
+            if not raw_text.lower().startswith("!tts"):
+                continue
+            if text.lower().startswith("!tts"):
+                text = text[4:].lstrip()
+            if not text or len(text) > 200:
+                continue
 
         payload = json.dumps({"type": "chat", "user": user, "text": text})
         await broadcast(payload)

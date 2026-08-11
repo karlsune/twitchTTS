@@ -1,0 +1,43 @@
+#engineLog {
+    background: #101010;
+    border: 1px solid #333;
+    padding: 0.75rem;
+    max-height: 45vh;
+    overflow-y: auto;
+}
+
+#engineLog div {
+    margin-bottom: 0.4rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+
+.log-info {
+    color: #d0d0d0;
+}
+
+.log-warn {
+    color: #ffc31d;
+}
+
+.log-error {
+    color: #f11e1e;
+}
+
+.log-chat {
+    color: #70cdff;
+}
+
+#enableOverlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 1000;
+}
+
+#enableOverlay.hidden {
+    display: none;
+}

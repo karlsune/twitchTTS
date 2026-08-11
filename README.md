@@ -11,6 +11,7 @@ Twitch TTS Engine provides real-time voice synthesis for Twitch chat messages. I
 - **Anonymous IRC Connection** — No Twitch API keys required
 - **Neural Text-to-Speech** — Server-side synthesis via [edge-tts](https://github.com/rany2/edge-tts) with fallback to browser-based TTS
 - **Content Sanitization** — Automatically removes emotes, emojis, and URLs from chat text before synthesis
+- **Third-Party Emote Support** — Detects and strips BTTV, FFZ, and 7TV emotes for the configured Twitch channel without requiring users to set separate emote IDs
 - **Web-Based Controls** — Mute, volume control, and voice selection via browser interface
 - **Persistent Settings** — User preferences stored in browser local storage
 - **Reliable Streaming** — Server-sent events (SSE) with automatic reconnection and heartbeat monitoring
