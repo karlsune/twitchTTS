@@ -2,340 +2,188 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>Local TTS Receiver</title>
+    <title>Twitch TTS</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+    <!-- One-time audio unlock (browser autoplay policy) -->
     <div id="enableOverlay">
-        <button id="enableAudioBtn" type="button">Click to enable TTS</button>
+        <button id="enableAudioBtn" type="button">
+            <span class="enable-icon" aria-hidden="true">🔊</span>
+            Click to enable TTS
+        </button>
     </div>
 
-    <div id="controls">
-        <button id="muteBtn" type="button">Mute</button>
-        <label>
-            Volume
+    <!-- Compact overlay bar: playback controls + admin toggle -->
+    <header id="controls">
+        <button id="muteBtn" class="btn" type="button">
+            <span class="btn-icon" aria-hidden="true">🔊</span>
+            <span class="btn-label">Mute</span>
+        </button>
+
+        <label class="field field--slider">
+            <span class="field-label">Volume</span>
             <input id="volumeSlider" type="range" min="0" max="100" value="80">
+            <output id="volumeValue" class="field-output">80%</output>
         </label>
-        <label>
-            TTS
+
+        <label class="field">
+            <span class="field-label">Engine</span>
             <select id="ttsMode">
                 <option value="server" selected>Server (Neural)</option>
                 <option value="browser">Browser</option>
             </select>
         </label>
-        <label id="serverVoiceWrap">
-            Neural voice
-            <select id="serverVoice"></select>
-        </label>
-        <label id="browserVoiceWrap">
-            Browser voice
+
+        <label id="browserVoiceWrap" class="field">
+            <span class="field-label">Browser voice</span>
             <select id="browserVoice"></select>
         </label>
+    </header>
+
+    <!-- Live chat line (the part you crop into OBS) -->
+    <div id="chatLine" class="chat-line">
+        <span class="chat-placeholder">TTS active — waiting for chat…</span>
     </div>
 
-    <div id="chatLine">TTS System Active. Awaiting chat events...</div>
-    <div id="engineLog"></div>
+    <!-- Inline admin panel -->
+    <section id="adminPanel" class="admin">
+        <div class="admin-header">
+            <h2>Admin</h2>
+            <div class="admin-header-right">
+                <span id="adminConnState" class="pill pill--muted">Connecting…</span>
+            </div>
+        </div>
 
-    <script>
-        const chatLine = document.getElementById('chatLine');
-        const engineLog = document.getElementById('engineLog');
-        const muteBtn = document.getElementById('muteBtn');
-        const volumeSlider = document.getElementById('volumeSlider');
-        const ttsModeSelect = document.getElementById('ttsMode');
-        const browserVoiceSelect = document.getElementById('browserVoice');
-        const serverVoiceSelect = document.getElementById('serverVoice');
-        const serverVoiceWrap = document.getElementById('serverVoiceWrap');
-        const browserVoiceWrap = document.getElementById('browserVoiceWrap');
-        const enableOverlay = document.getElementById('enableOverlay');
-        const enableAudioBtn = document.getElementById('enableAudioBtn');
+        <div class="admin-body">
+        <!-- Token (auto-filled from same-origin server; editable as fallback) -->
+        <details id="tokenDetails" class="admin-section admin-section--token">
+            <summary>Admin token</summary>
+            <div class="section-body">
+                <label class="stack">
+                    <span class="field-label">Token</span>
+                    <input id="adminToken" type="password" placeholder="auto-loaded" autocomplete="off">
+                </label>
+                <p class="hint">Auto-loaded from the local server. Only edit if you pinned a custom token.</p>
+            </div>
+        </details>
 
-        const speechQueue = [];
-        let isSpeaking = false;
-        let isMuted = false;
-        let audioEnabled = false;
-        let currentAudio = null;
+        <!-- Core TTS settings (live) -->
+        <section class="admin-section admin-section--wide">
+            <h3>TTS rules</h3>
+            <div class="section-body grid">
+                <label class="stack">
+                    <span class="field-label">Mode</span>
+                    <select id="setMode">
+                        <option value="all">All messages</option>
+                        <option value="command">Command only</option>
+                    </select>
+                </label>
 
-        const settings = {
-            muted: localStorage.getItem('ttsMuted') === 'true',
-            volume: Number(localStorage.getItem('ttsVolume') ?? 80),
-            mode: localStorage.getItem('ttsMode') ?? 'server',
-            browserVoice: localStorage.getItem('ttsBrowserVoice') ?? '',
-            serverVoice: localStorage.getItem('ttsServerVoice') ?? 'en-US-JennyNeural',
-        };
+                <label class="stack" data-mode="command">
+                    <span class="field-label">Command prefix</span>
+                    <input id="setCommand" type="text" placeholder="!tts" autocomplete="off">
+                </label>
 
-        isMuted = settings.muted;
-        volumeSlider.value = settings.volume;
-        ttsModeSelect.value = settings.mode;
+                <label class="stack" data-mode="command">
+                    <span class="field-label">Permission</span>
+                    <select id="setPermission">
+                        <option value="everyone">Everyone (and up)</option>
+                        <option value="subscriber">Subscriber and up</option>
+                        <option value="vip">VIP and up</option>
+                        <option value="moderator">Moderator and up</option>
+                        <option value="broadcaster">Broadcaster only</option>
+                    </select>
+                </label>
 
-        function saveSettings() {
-            localStorage.setItem('ttsMuted', String(isMuted));
-            localStorage.setItem('ttsVolume', volumeSlider.value);
-            localStorage.setItem('ttsMode', ttsModeSelect.value);
-            localStorage.setItem('ttsBrowserVoice', browserVoiceSelect.value);
-            localStorage.setItem('ttsServerVoice', serverVoiceSelect.value);
-        }
+                <label class="stack" data-mode="command">
+                    <span class="field-label">Cooldown (seconds)</span>
+                    <input id="setCooldown" type="number" min="0" step="1" placeholder="0">
+                </label>
 
-        function updateMuteButton() {
-            muteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
-            muteBtn.classList.toggle('muted', isMuted);
-        }
+                <label class="stack">
+                    <span class="field-label">Default neural voice</span>
+                    <select id="setVoice"></select>
+                </label>
 
-        function getVolume() {
-            return Number(volumeSlider.value) / 100;
-        }
+                <label class="stack">
+                    <span class="field-label">Max characters</span>
+                    <input id="setMaxChars" type="number" min="1" max="2000" step="10" placeholder="200">
+                </label>
+            </div>
+            <div class="section-actions">
+                <button id="settingsSave" class="btn btn--primary" type="button">Save rules</button>
+                <button id="settingsReset" class="btn btn--ghost" type="button">Reset</button>
+                <span id="settingsFeedback" class="feedback" role="status" aria-live="polite"></span>
+            </div>
+        </section>
 
-        function updateVoiceVisibility() {
-            const serverMode = ttsModeSelect.value === 'server';
-            serverVoiceWrap.style.display = serverMode ? 'inline-flex' : 'none';
-            browserVoiceWrap.style.display = serverMode ? 'none' : 'inline-flex';
-        }
+        <!-- Per-user whitelists -->
+        <section class="admin-section">
+            <h3>User overrides</h3>
+            <div class="section-body">
+                <div class="user-row">
+                    <input id="adminUser" type="text" placeholder="username" autocomplete="off">
+                    <select id="adminGroup">
+                        <option value="commandless">Skip command</option>
+                        <option value="nocooldown">Skip cooldown</option>
+                        <option value="all">Skip both</option>
+                        <option value="blacklist">Blacklist</option>
+                    </select>
+                    <button id="adminAllow" class="btn btn--primary btn--sm" type="button">Add</button>
+                    <button id="adminDisallow" class="btn btn--sm" type="button">Remove</button>
+                </div>
 
-        function appendEngineLog(entry) {
-            const line = document.createElement('div');
-            line.className = `log-${entry.level || 'info'}`;
-            line.textContent = `[${entry.time}] ${entry.message}`;
-            engineLog.appendChild(line);
-            engineLog.scrollTop = engineLog.scrollHeight;
+                <div class="lists">
+                    <div class="list-block">
+                        <div class="list-title">Commandless</div>
+                        <ul id="listCommandless" class="chips"><li class="chips-empty">none</li></ul>
+                    </div>
+                    <div class="list-block">
+                        <div class="list-title">No cooldown</div>
+                        <ul id="listNocooldown" class="chips"><li class="chips-empty">none</li></ul>
+                    </div>
+                </div>
+                <div class="list-block">
+                    <div class="list-title list-title--danger">Blacklisted (never spoken)</div>
+                    <ul id="listBlacklist" class="chips"><li class="chips-empty">none</li></ul>
+                </div>
+            </div>
+        </section>
 
-            while (engineLog.children.length > 50) {
-                engineLog.removeChild(engineLog.firstChild);
-            }
-        }
+        <!-- Global toggles + danger zone -->
+        <section class="admin-section">
+            <h3>Global overrides</h3>
+            <div class="section-body">
+                <div class="toggle-row">
+                    <div class="toggle-copy">
+                        <div class="toggle-title">Force commandless for everyone</div>
+                        <div class="toggle-sub">In command mode, let all chatters speak without the prefix.</div>
+                    </div>
+                    <button id="forceAllToggle" class="switch" type="button" role="switch" aria-checked="false">
+                        <span class="switch-knob"></span>
+                    </button>
+                </div>
+                <div class="danger">
+                    <button id="adminShutdown" class="btn btn--danger btn--sm" type="button">Shut down engine</button>
+                </div>
+            </div>
+        </section>
+        </div>
+    </section>
 
-        function populateServerVoices(voices) {
-            const englishVoices = voices.filter((voice) => voice.locale.startsWith('en-'));
-            const list = englishVoices.length > 0 ? englishVoices : voices;
+    <!-- Log -->
+    <section id="engineLogWrap" class="log-wrap">
+        <button id="logToggle" class="log-toggle" type="button" aria-expanded="true">
+            Log <span class="chevron">▾</span>
+        </button>
+        <div id="engineLog" class="log"></div>
+    </section>
 
-            serverVoiceSelect.innerHTML = '';
-            list.forEach((voice) => {
-                const option = document.createElement('option');
-                option.value = voice.name;
-                option.textContent = voice.label;
-                serverVoiceSelect.appendChild(option);
-            });
-
-            if (settings.serverVoice) {
-                serverVoiceSelect.value = settings.serverVoice;
-            }
-            if (!serverVoiceSelect.value && serverVoiceSelect.options.length > 0) {
-                serverVoiceSelect.selectedIndex = 0;
-            }
-        }
-
-        async function loadServerVoices() {
-            try {
-                const response = await fetch('http://127.0.0.1:8080/api/voices', { cache: 'no-store' });
-                if (!response.ok) {
-                    throw new Error(`Voice list failed (${response.status})`);
-                }
-                populateServerVoices(await response.json());
-            } catch (error) {
-                appendEngineLog({
-                    time: new Date().toLocaleTimeString(),
-                    level: 'warn',
-                    message: `Voice API unavailable (${error.message}). Waiting for SSE voice list...`,
-                });
-            }
-        }
-
-        function loadBrowserVoices() {
-            const voices = window.speechSynthesis.getVoices();
-            browserVoiceSelect.innerHTML = '';
-
-            voices.forEach((voice) => {
-                const option = document.createElement('option');
-                option.value = voice.name;
-                option.textContent = `${voice.name} (${voice.lang})`;
-                browserVoiceSelect.appendChild(option);
-            });
-
-            if (settings.browserVoice) {
-                browserVoiceSelect.value = settings.browserVoice;
-            }
-        }
-
-        async function unlockAudio() {
-            audioEnabled = true;
-            enableOverlay.classList.add('hidden');
-
-            const silent = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIAAANIAAAAQAAAaAAAAD/+1DEAg/wAABpAAAACAAAD/AAAA');
-            silent.volume = 0;
-            try {
-                await silent.play();
-            } catch (error) {
-                console.warn('Silent unlock failed:', error);
-            }
-
-            processQueue();
-        }
-
-        window.speechSynthesis.onvoiceschanged = loadBrowserVoices;
-        loadBrowserVoices();
-        loadServerVoices();
-        updateMuteButton();
-        updateVoiceVisibility();
-
-        enableAudioBtn.addEventListener('click', unlockAudio);
-
-        muteBtn.addEventListener('click', () => {
-            isMuted = !isMuted;
-            updateMuteButton();
-
-            if (isMuted) {
-                speechQueue.length = 0;
-                window.speechSynthesis.cancel();
-                if (currentAudio) {
-                    currentAudio.pause();
-                    currentAudio = null;
-                }
-                isSpeaking = false;
-            }
-
-            saveSettings();
-        });
-
-        volumeSlider.addEventListener('input', () => {
-            if (currentAudio) {
-                currentAudio.volume = getVolume();
-            }
-            saveSettings();
-        });
-
-        ttsModeSelect.addEventListener('change', () => {
-            updateVoiceVisibility();
-            saveSettings();
-        });
-
-        browserVoiceSelect.addEventListener('change', saveSettings);
-        serverVoiceSelect.addEventListener('change', saveSettings);
-
-        function finishSpeaking() {
-            isSpeaking = false;
-            currentAudio = null;
-            processQueue();
-        }
-
-        async function speakWithServer(text) {
-            const voice = encodeURIComponent(serverVoiceSelect.value);
-            const response = await fetch(
-                `http://localhost:8080/api/tts?text=${encodeURIComponent(text)}&voice=${voice}`
-            );
-            if (!response.ok) {
-                throw new Error(`Server TTS failed (${response.status})`);
-            }
-
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            audio.volume = getVolume();
-            currentAudio = audio;
-
-            await new Promise((resolve, reject) => {
-                audio.onended = () => {
-                    URL.revokeObjectURL(url);
-                    resolve();
-                };
-                audio.onerror = () => {
-                    URL.revokeObjectURL(url);
-                    reject(new Error('Audio playback failed'));
-                };
-                audio.play().catch(reject);
-            });
-        }
-
-        function speakWithBrowser(text) {
-            return new Promise((resolve, reject) => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = 1.0;
-                utterance.pitch = 1.0;
-                utterance.volume = getVolume();
-
-                const selectedVoice = window.speechSynthesis
-                    .getVoices()
-                    .find((voice) => voice.name === browserVoiceSelect.value);
-                if (selectedVoice) {
-                    utterance.voice = selectedVoice;
-                }
-
-                utterance.onend = resolve;
-                utterance.onerror = () => reject(new Error('Browser TTS failed'));
-                window.speechSynthesis.speak(utterance);
-            });
-        }
-
-        async function processQueue() {
-            if (!audioEnabled || isSpeaking || isMuted || speechQueue.length === 0) {
-                return;
-            }
-
-            isSpeaking = true;
-            const messageText = speechQueue.shift();
-
-            try {
-                if (ttsModeSelect.value === 'server') {
-                    await speakWithServer(messageText);
-                } else {
-                    await speakWithBrowser(messageText);
-                }
-            } catch (error) {
-                appendEngineLog({
-                    time: new Date().toLocaleTimeString(),
-                    level: 'warn',
-                    message: `Playback issue: ${error.message}`,
-                });
-                if (ttsModeSelect.value === 'server') {
-                    try {
-                        await speakWithBrowser(messageText);
-                    } catch (fallbackError) {
-                        appendEngineLog({
-                            time: new Date().toLocaleTimeString(),
-                            level: 'error',
-                            message: `Fallback TTS failed: ${fallbackError.message}`,
-                        });
-                    }
-                }
-            } finally {
-                finishSpeaking();
-            }
-        }
-
-        const eventSource = new EventSource('http://localhost:8081');
-
-        eventSource.onmessage = (event) => {
-            if (event.data.startsWith(':')) {
-                return;
-            }
-
-            const data = JSON.parse(event.data);
-
-            if (data.type === 'log') {
-                appendEngineLog(data);
-                return;
-            }
-
-            if (data.type === 'voices') {
-                populateServerVoices(data.voices);
-                return;
-            }
-
-            chatLine.innerText = `${data.user}: ${data.text}`;
-
-            if (!isMuted && data.text) {
-                speechQueue.push(data.text);
-                processQueue();
-            }
-        };
-
-        eventSource.onerror = () => {
-            appendEngineLog({
-                time: new Date().toLocaleTimeString(),
-                level: 'warn',
-                message: 'Connection to core engine broken. Retrying...',
-            });
-        };
-    </script>
+    <script src="app.js"></script>
 </body>
 </html>

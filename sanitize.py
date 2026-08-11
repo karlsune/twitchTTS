@@ -41,6 +41,25 @@ def strip_twitch_emotes(text: str, emote_ranges: list[tuple[int, int]]) -> str:
     return "".join(ch for ch, k in zip(text, keep) if k)
 
 
+def shift_emote_ranges(
+    emote_ranges: list[tuple[int, int]], offset: int
+) -> list[tuple[int, int]]:
+    """Re-base Twitch emote ranges after slicing ``offset`` chars off the front.
+
+    Twitch emote indices point into the ORIGINAL message. When we speak only
+    the part after a command prefix (e.g. ``!tts ``), the substring starts at
+    ``offset``, so each range must be shifted left by that many characters.
+    Ranges that fall entirely inside the removed prefix are dropped; ranges
+    that straddle the boundary are clamped to 0.
+    """
+    shifted: list[tuple[int, int]] = []
+    for start, end in emote_ranges:
+        if end < offset:
+            continue
+        shifted.append((max(0, start - offset), end - offset))
+    return shifted
+
+
 def strip_named_emotes(text: str, emote_names: set[str] | None) -> str:
     """Remove whole words that match known BTTV/FFZ/7TV emote names."""
     if not emote_names:
