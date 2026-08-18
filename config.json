@@ -2,5 +2,15 @@
   "twitch_channel": "shitemike",
   "http_port": 8080,
   "stream_port": 8081,
-  "tts_voice": "en-TZ-ElimuNeural"
+  "tts_voice": "en-TZ-ElimuNeural",
+  "command_prefix": "!tts",
+  "special_users": ["shitemike", "dexfer", "jakethesnake0410"],
+  "cooldown_seconds": 3,
+  "max_chars": 200,
+  "audio": {
+    "enabled": true,
+    "volume": 0.8,
+    "muted": false,
+    "queue_size": 50
+  }
 }

@@ -15,11 +15,13 @@
 
     <div id="controls">
         <button id="muteBtn" type="button">Mute</button>
+        <button id="skipBtn" type="button">Skip</button>
+        <span id="modeBadge" class="mode-badge"></span>
         <label>
             Volume
             <input id="volumeSlider" type="range" min="0" max="100" value="80">
         </label>
-        <label>
+        <label id="ttsModeWrap">
             TTS Mode
             <select id="ttsMode">
                 <option value="server" selected>Server (Neural)</option>
@@ -36,25 +38,38 @@
         </label>
     </div>
 
+    <div id="nowPlaying" class="now-playing">
+        <span id="nowPlayingText"></span>
+        <span id="queueInfo"></span>
+    </div>
+
     <div id="engineLog"></div>
 
     <script>
         const engineLog = document.getElementById('engineLog');
         const muteBtn = document.getElementById('muteBtn');
         const volumeSlider = document.getElementById('volumeSlider');
+        const skipBtn = document.getElementById('skipBtn');
         const ttsModeSelect = document.getElementById('ttsMode');
+        const ttsModeWrap = document.getElementById('ttsModeWrap');
         const browserVoiceSelect = document.getElementById('browserVoice');
         const serverVoiceSelect = document.getElementById('serverVoice');
         const serverVoiceWrap = document.getElementById('serverVoiceWrap');
         const browserVoiceWrap = document.getElementById('browserVoiceWrap');
         const enableOverlay = document.getElementById('enableOverlay');
         const enableAudioBtn = document.getElementById('enableAudioBtn');
+        const nowPlayingBox = document.getElementById('nowPlaying');
+        const nowPlayingText = document.getElementById('nowPlayingText');
+        const queueInfo = document.getElementById('queueInfo');
+        const modeBadge = document.getElementById('modeBadge');
 
         const speechQueue = [];
         let isSpeaking = false;
         let isMuted = false;
         let audioEnabled = false;
         let currentAudio = null;
+        let appConfig = null;
+        let serverAudioMode = false;
 
         const settings = {
             muted: localStorage.getItem('ttsMuted') === 'true',
@@ -86,9 +101,64 @@
         }
 
         function updateVoiceVisibility() {
+            if (serverAudioMode) {
+                ttsModeWrap.style.display = 'none';
+                serverVoiceWrap.style.display = 'inline-flex';
+                browserVoiceWrap.style.display = 'none';
+                return;
+            }
             const serverMode = ttsModeSelect.value === 'server';
+            ttsModeWrap.style.display = '';
             serverVoiceWrap.style.display = serverMode ? 'inline-flex' : 'none';
             browserVoiceWrap.style.display = serverMode ? 'none' : 'inline-flex';
+        }
+
+        function applyServerConfig() {
+            if (!appConfig) {
+                return;
+            }
+            serverAudioMode = !!appConfig.audio_enabled;
+            modeBadge.textContent = serverAudioMode ? 'Host audio' : 'Browser mode';
+            modeBadge.classList.toggle('host-audio', serverAudioMode);
+
+            isMuted = appConfig.audio.muted;
+            volumeSlider.value = Math.round(appConfig.audio.volume * 100);
+            updateMuteButton();
+
+            updateVoiceVisibility();
+
+            // In host-audio mode the browser never plays sound itself.
+            enableOverlay.classList.toggle('hidden', serverAudioMode || audioEnabled);
+        }
+
+        async function fetchAppConfig() {
+            try {
+                const response = await fetch('api/config', { cache: 'no-store' });
+                if (response.ok) {
+                    appConfig = await response.json();
+                    if (appConfig.tts_voice) {
+                        settings.serverVoice = appConfig.tts_voice;
+                    }
+                }
+            } catch (error) {
+                appendEngineLog({
+                    time: new Date().toLocaleTimeString(),
+                    level: 'warn',
+                    message: `Config API unavailable (${error.message}). Assuming browser mode.`,
+                });
+            }
+            applyServerConfig();
+        }
+
+        function showNowPlaying(data) {
+            nowPlayingText.textContent = `${data.user}: ${data.text}`;
+            nowPlayingBox.classList.remove('now-playing-flash');
+            void nowPlayingBox.offsetWidth;
+            nowPlayingBox.classList.add('now-playing-flash');
+        }
+
+        function updateQueueInfo(size) {
+            queueInfo.textContent = `Queue: ${size}`;
         }
 
         function appendEngineLog(entry) {
@@ -131,7 +201,7 @@
 
         async function loadServerVoices() {
             try {
-                const response = await fetch('http://127.0.0.1:8080/api/voices', { cache: 'no-store' });
+                const response = await fetch('api/voices', { cache: 'no-store' });
                 if (!response.ok) {
                     throw new Error(`Voice list failed (${response.status})`);
                 }
@@ -181,10 +251,45 @@
         loadServerVoices();
         updateMuteButton();
         updateVoiceVisibility();
+        fetchAppConfig().then(connectEventSource);
 
         enableAudioBtn.addEventListener('click', unlockAudio);
 
+        async function remoteControl(action, value) {
+            try {
+                const response = await fetch('api/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(value !== undefined ? { action, value } : { action }),
+                });
+                if (!response.ok) {
+                    throw new Error(`Control failed (${response.status})`);
+                }
+                applyControlState(await response.json());
+            } catch (error) {
+                appendEngineLog({
+                    time: new Date().toLocaleTimeString(),
+                    level: 'warn',
+                    message: `Remote control failed: ${error.message}`,
+                });
+            }
+        }
+
+        function applyControlState(state) {
+            if (typeof state.muted === 'boolean') {
+                isMuted = state.muted;
+                updateMuteButton();
+            }
+            if (typeof state.volume === 'number') {
+                volumeSlider.value = Math.round(state.volume * 100);
+            }
+        }
+
         muteBtn.addEventListener('click', () => {
+            if (serverAudioMode) {
+                remoteControl(isMuted ? 'unmute' : 'mute');
+                return;
+            }
             isMuted = !isMuted;
             updateMuteButton();
 
@@ -201,7 +306,25 @@
             saveSettings();
         });
 
+        skipBtn.addEventListener('click', () => {
+            if (serverAudioMode) {
+                remoteControl('skip');
+                return;
+            }
+            window.speechSynthesis.cancel();
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+            }
+            isSpeaking = false;
+            processQueue();
+        });
+
         volumeSlider.addEventListener('input', () => {
+            if (serverAudioMode) {
+                remoteControl('volume', getVolume());
+                return;
+            }
             if (currentAudio) {
                 currentAudio.volume = getVolume();
             }
@@ -214,7 +337,34 @@
         });
 
         browserVoiceSelect.addEventListener('change', saveSettings);
-        serverVoiceSelect.addEventListener('change', saveSettings);
+
+        async function remoteVoiceChange(voice) {
+            try {
+                const response = await fetch('api/voice', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ voice }),
+                });
+                if (!response.ok) {
+                    throw new Error(`Voice change failed (${response.status})`);
+                }
+                saveSettings();
+            } catch (error) {
+                appendEngineLog({
+                    time: new Date().toLocaleTimeString(),
+                    level: 'warn',
+                    message: `Voice change failed: ${error.message}`,
+                });
+            }
+        }
+
+        serverVoiceSelect.addEventListener('change', () => {
+            if (serverAudioMode) {
+                remoteVoiceChange(serverVoiceSelect.value);
+                return;
+            }
+            saveSettings();
+        });
 
         function finishSpeaking() {
             isSpeaking = false;
@@ -225,7 +375,7 @@
         async function speakWithServer(text) {
             const voice = encodeURIComponent(serverVoiceSelect.value);
             const response = await fetch(
-                `http://localhost:8080/api/tts?text=${encodeURIComponent(text)}&voice=${voice}`
+                `api/tts?text=${encodeURIComponent(text)}&voice=${voice}`
             );
             if (!response.ok) {
                 throw new Error(`Server TTS failed (${response.status})`);
@@ -306,50 +456,83 @@
             }
         }
 
-        const eventSource = new EventSource('http://localhost:8081');
+        function streamUrl() {
+            const port = (appConfig && appConfig.stream_port) || 8081;
+            const host = location.hostname || 'localhost';
+            return `http://${host}:${port}`;
+        }
 
-        eventSource.onmessage = (event) => {
-            if (event.data.startsWith(':')) {
-                return;
-            }
+        function connectEventSource() {
+            const eventSource = new EventSource(streamUrl());
 
-            const data = JSON.parse(event.data);
+            eventSource.onmessage = (event) => {
+                if (event.data.startsWith(':')) {
+                    return;
+                }
 
-            if (data.type === 'log') {
-                appendEngineLog(data);
-                return;
-            }
+                const data = JSON.parse(event.data);
 
-            if (data.type === 'voices') {
-                populateServerVoices(data.voices);
-                return;
-            }
+                if (data.type === 'log') {
+                    appendEngineLog(data);
+                    return;
+                }
 
-            if (data.type !== 'chat') {
-                return;
-            }
+                if (data.type === 'voices') {
+                    populateServerVoices(data.voices);
+                    return;
+                }
 
-            flashForChatMessage();
+                if (data.type === 'voice') {
+                    if (data.voice) {
+                        serverVoiceSelect.value = data.voice;
+                    }
+                    return;
+                }
 
-            appendEngineLog({
-                time: new Date().toLocaleTimeString(),
-                level: 'chat',
-                message: `${data.user}: ${data.text}`,
-            });
+                if (data.type === 'control') {
+                    if (serverAudioMode) {
+                        applyControlState(data);
+                        updateQueueInfo(data.queue_size || 0);
+                    }
+                    return;
+                }
 
-            if (!isMuted && data.text) {
-                speechQueue.push(data.text);
-                processQueue();
-            }
-        };
+                if (data.type === 'now_playing') {
+                    showNowPlaying(data);
+                    return;
+                }
 
-        eventSource.onerror = () => {
-            appendEngineLog({
-                time: new Date().toLocaleTimeString(),
-                level: 'warn',
-                message: 'Connection to core engine broken. Retrying...',
-            });
-        };
+                if (data.type === 'queue') {
+                    updateQueueInfo(data.size);
+                    return;
+                }
+
+                if (data.type !== 'chat') {
+                    return;
+                }
+
+                flashForChatMessage();
+
+                appendEngineLog({
+                    time: new Date().toLocaleTimeString(),
+                    level: 'chat',
+                    message: `${data.user}: ${data.text}`,
+                });
+
+                if (!serverAudioMode && !isMuted && data.text) {
+                    speechQueue.push(data.text);
+                    processQueue();
+                }
+            };
+
+            eventSource.onerror = () => {
+                appendEngineLog({
+                    time: new Date().toLocaleTimeString(),
+                    level: 'warn',
+                    message: 'Connection to core engine broken. Retrying...',
+                });
+            };
+        }
     </script>
 </body>
 </html>

@@ -10,13 +10,16 @@ The process has three cooperating pieces:
 Runtime settings are loaded from ``config.json`` next to this file.
 """
 
+import argparse
 import asyncio
 import concurrent.futures
 import http.server
 import json
+import queue
 import socketserver
 import sys
 import threading
+import time
 import urllib.parse
 from collections import deque
 from datetime import datetime
@@ -26,6 +29,16 @@ import edge_tts
 
 from emotes import fetch_emote_names
 from sanitize import sanitize_chat_text
+
+try:
+    from audio import AudioPlayer, init_player
+
+    AUDIO_IMPORT_OK = True
+except ImportError:
+    # pygame not installed: host audio stays disabled, browser mode still works.
+    AudioPlayer = None  # type: ignore[assignment]
+    init_player = None  # type: ignore[assignment]
+    AUDIO_IMPORT_OK = False
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 LOG_BUFFER_SIZE = 50
@@ -39,6 +52,15 @@ voices_lock = threading.Lock()
 third_party_emotes: set[str] = set()
 tts_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="tts")
 
+# Host-audio (server-side playback) state.
+server_voice: str = "en-US-JennyNeural"
+audio_player: AudioPlayer | None = None
+speech_queue: queue.Queue | None = None
+audio_enabled = False
+audio_state = {"muted": False, "volume": 0.8}
+last_speak_time: dict[str, float] = {}
+last_speak_lock = threading.Lock()
+
 
 def load_config() -> dict:
     """Load the JSON configuration located beside the application file."""
@@ -51,6 +73,16 @@ TWITCH_CHANNEL = CONFIG["twitch_channel"]
 HTTP_PORT = CONFIG["http_port"]
 STREAM_PORT = CONFIG["stream_port"]
 DEFAULT_TTS_VOICE = CONFIG.get("tts_voice", "en-US-JennyNeural")
+COMMAND_PREFIX = CONFIG.get("command_prefix", "!tts")
+SPECIAL_USERS = {user.lower() for user in CONFIG.get("special_users", [])}
+COOLDOWN_SECONDS = float(CONFIG.get("cooldown_seconds", 0))
+MAX_CHARS = int(CONFIG.get("max_chars", 200))
+AUDIO_CONFIG = CONFIG.get("audio", {}) if isinstance(CONFIG.get("audio", {}), dict) else {}
+AUDIO_ENABLED_BY_DEFAULT = bool(AUDIO_CONFIG.get("enabled", True))
+QUEUE_SIZE = max(1, int(AUDIO_CONFIG.get("queue_size", 50)))
+audio_state["muted"] = bool(AUDIO_CONFIG.get("muted", False))
+audio_state["volume"] = max(0.0, min(1.0, float(AUDIO_CONFIG.get("volume", 0.8))))
+server_voice = DEFAULT_TTS_VOICE
 
 
 
@@ -81,8 +113,175 @@ def app_log(message: str, level: str = "info") -> None:
     with log_lock:
         log_buffer.append(entry)
 
+    print(f"[{entry['time']}] {message}", flush=True)
+
     if main_loop and main_loop.is_running():
         asyncio.run_coroutine_threadsafe(broadcast(json.dumps(entry)), main_loop)
+
+
+def origin_allowed(origin: str | None) -> bool:
+    """Allow empty origins (curl/CLI) and loopback browser origins.
+
+    This prevents random websites from triggering TTS or reading chat through
+    the user's browser while keeping same-machine tooling working.
+    """
+    if not origin:
+        return True
+    try:
+        host = urllib.parse.urlparse(origin).hostname or ""
+    except ValueError:
+        return False
+    return host in ("localhost", "127.0.0.1", "::1")
+
+
+def header_origin(request_text: str) -> str | None:
+    """Extract the Origin (or Referer) header from a raw HTTP request."""
+    for line in request_text.split("\r\n")[1:]:
+        name, _, value = line.partition(":")
+        if name.lower() in ("origin", "referer"):
+            return value.strip()
+    return None
+
+
+def check_cooldown(user: str) -> bool:
+    """Return True when a user may speak, enforcing a per-user cooldown."""
+    if COOLDOWN_SECONDS <= 0:
+        return True
+    now = time.monotonic()
+    with last_speak_lock:
+        last = last_speak_time.get(user)
+        if last is not None and now - last < COOLDOWN_SECONDS:
+            return False
+        last_speak_time[user] = now
+        if len(last_speak_time) > 1000:
+            for name, last_at in list(last_speak_time.items()):
+                if now - last_at > 600:
+                    del last_speak_time[name]
+    return True
+
+
+def broadcast_control_state() -> None:
+    """Broadcast the current host-audio state and queue depth to browsers."""
+    if not main_loop or not main_loop.is_running():
+        return
+    payload = json.dumps(
+        {
+            "type": "control",
+            "muted": audio_state["muted"],
+            "volume": audio_state["volume"],
+            "queue_size": speech_queue.qsize() if speech_queue else 0,
+        }
+    )
+    asyncio.run_coroutine_threadsafe(broadcast(payload), main_loop)
+
+
+def set_muted(muted: bool) -> None:
+    """Mute or unmute host audio and notify connected browsers."""
+    audio_state["muted"] = bool(muted)
+    if audio_player is not None:
+        audio_player.set_muted(audio_state["muted"])
+    broadcast_control_state()
+
+
+def adjust_volume(delta: float) -> None:
+    """Adjust the host-audio volume by a step and notify connected browsers."""
+    audio_state["volume"] = max(0.0, min(1.0, audio_state["volume"] + delta))
+    if audio_player is not None:
+        audio_player.set_volume(audio_state["volume"])
+    broadcast_control_state()
+
+
+def enqueue_speech(user: str, text: str) -> None:
+    """Add a chat message to the host-audio queue, dropping the oldest when full."""
+    if speech_queue is None:
+        return
+    if speech_queue.full():
+        try:
+            speech_queue.get_nowait()
+        except queue.Empty:
+            pass
+        app_log("Audio queue full: dropped oldest message", level="warn")
+    speech_queue.put_nowait((user, text))
+    broadcast_control_state()
+
+
+def audio_worker() -> None:
+    """Synthesize queued chat messages and play them on the host speakers."""
+    while True:
+        if speech_queue is None:
+            return
+        item = speech_queue.get()
+        if item is None:
+            return
+        user, text = item
+        try:
+            mp3 = generate_tts_audio_sync(text, server_voice)
+        except Exception as exc:
+            app_log(f"TTS generation failed for {user}: {exc}", level="error")
+            continue
+        if audio_player is None:
+            continue
+        audio_player.play(mp3)
+        app_log(f"Now speaking: {user}: {text}")
+        payload = json.dumps({"type": "now_playing", "user": user, "text": text})
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(broadcast(payload), main_loop)
+
+
+def _console_key(key: str) -> None:
+    """Handle a single console keypress for host-audio controls."""
+    if key == "m":
+        set_muted(not audio_state["muted"])
+        app_log(f"{'Muted' if audio_state['muted'] else 'Unmuted'} host audio")
+    elif key in ("+", "="):
+        adjust_volume(0.05)
+        app_log(f"Volume {int(audio_state['volume'] * 100)}%")
+    elif key == "-":
+        adjust_volume(-0.05)
+        app_log(f"Volume {int(audio_state['volume'] * 100)}%")
+    elif key == "s":
+        if audio_player is not None:
+            audio_player.skip()
+        app_log("Skipped current message")
+    elif key == "q":
+        app_log("Press Ctrl+C to stop the engine")
+
+
+def console_controls_windows() -> None:
+    """Poll Windows console keys for host-audio controls."""
+    import msvcrt
+
+    app_log("Audio keys: [m] mute  [+/-] volume  [s] skip  [q] quit")
+    while True:
+        if msvcrt.kbhit():
+            _console_key(msvcrt.getwch().lower())
+        time.sleep(0.05)
+
+
+def console_controls_prompt() -> None:
+    """Fallback console controls using line input (non-Windows)."""
+    app_log("Audio keys: [m] mute  [+/-] volume  [s] skip  [q] quit")
+    while True:
+        try:
+            key = input("audio> ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if key:
+            _console_key(key[0])
+
+
+def start_console_controls() -> None:
+    """Start the host-audio console control loop in a background thread."""
+    try:
+        import msvcrt  # noqa: F401
+    except ImportError:
+        threading.Thread(
+            target=console_controls_prompt, name="console-controls", daemon=True
+        ).start()
+    else:
+        threading.Thread(
+            target=console_controls_windows, name="console-controls", daemon=True
+        ).start()
 
 
 async def generate_tts_audio(text: str, voice: str) -> bytes:
@@ -319,27 +518,52 @@ async def _listen_to_twitch_chat() -> None:
         text = sanitize_chat_text(raw_text, emote_ranges, third_party_emotes)
 
         # Ignore empty or overly long messages.
-        # Special users can send chat without the !tts prefix.
-        # Other users must start messages with !tts.
-        is_special_user = user.lower() in ("shitemike", "dexfer", "jakethesnake0410")
+        # Special users can speak without the command prefix; everyone else
+        # must start messages with the configured prefix (default "!tts").
+        is_special_user = user.lower() in SPECIAL_USERS
         if is_special_user:
-            if not text or len(text) > 200:
+            if not text or len(text) > MAX_CHARS:
                 continue
         else:
-            if not raw_text.lower().startswith("!tts"):
+            if not raw_text.lower().startswith(COMMAND_PREFIX):
                 continue
-            if text.lower().startswith("!tts"):
-                text = text[4:].lstrip()
-            if not text or len(text) > 200:
+            if text.lower().startswith(COMMAND_PREFIX):
+                text = text[len(COMMAND_PREFIX):].lstrip()
+            if not text or len(text) > MAX_CHARS:
                 continue
+
+        # Enforce a per-user cooldown so spammers cannot flood the queue.
+        if not is_special_user and not check_cooldown(user):
+            continue
 
         payload = json.dumps({"type": "chat", "user": user, "text": text})
         await broadcast(payload)
+
+        if audio_enabled:
+            enqueue_speech(user, text)
 
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     """Serve one long-lived SSE client connection on the stream port."""
     peer = writer.get_extra_info("peername")
+
+    # Read the HTTP request so we can enforce the loopback-origin policy.
+    try:
+        request_data = await asyncio.wait_for(
+            reader.readuntil(b"\r\n\r\n"), timeout=10
+        )
+    except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, TimeoutError, OSError):
+        close_writer(writer)
+        return
+
+    origin = header_origin(request_data.decode("utf-8", errors="replace"))
+    if not origin_allowed(origin):
+        app_log(f"Blocked SSE client from origin: {origin}", level="warn")
+        writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        await writer.drain()
+        close_writer(writer)
+        return
+
     header = (
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/event-stream\r\n"
@@ -393,17 +617,74 @@ def start_http_server() -> None:
             self.send_header("Expires", "0")
             super().end_headers()
 
+        def _api_origin_allowed(self) -> bool:
+            origin = self.headers.get("Origin") or self.headers.get("Referer")
+            return origin_allowed(origin)
+
+        def _reject_cross_origin(self) -> bool:
+            """Send 403 when the request does not come from the local UI."""
+            if self._api_origin_allowed():
+                return False
+            self.send_error(403, "Forbidden")
+            return True
+
+        def _send_json(self, data) -> None:
+            payload = json.dumps(data).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def _read_json_body(self) -> dict | None:
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                return None
+            if length <= 0 or length > 4096:
+                return None
+            try:
+                return json.loads(self.rfile.read(length).decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return None
+
         def do_GET(self):
             """Route API requests before delegating static files to the base handler."""
             parsed = urllib.parse.urlparse(self.path)
+            if (
+                parsed.path in ("/api/tts", "/api/voices", "/api/config")
+                and self._reject_cross_origin()
+            ):
+                return
             if parsed.path == "/api/tts":
                 self._handle_tts_request(parsed)
                 return
             if parsed.path == "/api/voices":
                 self._handle_voices_request()
                 return
+            if parsed.path == "/api/config":
+                self._handle_config_request()
+                return
             self.path = parsed.path
             super().do_GET()
+
+        def do_POST(self):
+            """Handle host-audio control endpoints (voice, mute, volume, skip)."""
+            parsed = urllib.parse.urlparse(self.path)
+            if (
+                parsed.path in ("/api/voice", "/api/control")
+                and self._reject_cross_origin()
+            ):
+                return
+            if parsed.path == "/api/voice":
+                self._handle_voice_request()
+                return
+            if parsed.path == "/api/control":
+                self._handle_control_request()
+                return
+            self.send_error(404, "Not found")
 
         def _handle_voices_request(self):
             """Return the cached voice list as JSON."""
@@ -413,15 +694,83 @@ def start_http_server() -> None:
                 app_log(f"Failed to load voices: {exc}", level="error")
                 self.send_error(500, "Failed to load voices")
                 return
+            self._send_json(voices)
 
-            payload = json.dumps(voices).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(payload)
+        def _handle_config_request(self):
+            """Return runtime settings so the browser can adapt to them."""
+            self._send_json(
+                {
+                    "twitch_channel": TWITCH_CHANNEL,
+                    "http_port": HTTP_PORT,
+                    "stream_port": STREAM_PORT,
+                    "tts_voice": server_voice,
+                    "command_prefix": COMMAND_PREFIX,
+                    "special_users": sorted(SPECIAL_USERS),
+                    "cooldown_seconds": COOLDOWN_SECONDS,
+                    "max_chars": MAX_CHARS,
+                    "audio_enabled": audio_enabled,
+                    "audio": {
+                        "enabled": AUDIO_ENABLED_BY_DEFAULT,
+                        "volume": audio_state["volume"],
+                        "muted": audio_state["muted"],
+                        "queue_size": QUEUE_SIZE,
+                    },
+                }
+            )
+
+        def _handle_voice_request(self):
+            """Set the voice used for host-audio synthesis."""
+            global server_voice
+            body = self._read_json_body()
+            if not isinstance(body, dict) or not isinstance(body.get("voice"), str):
+                self.send_error(400, "Missing voice parameter")
+                return
+            voice = body["voice"].strip()
+            if not voice:
+                self.send_error(400, "Missing voice parameter")
+                return
+            server_voice = voice
+            app_log(f"Host audio voice set to {server_voice}")
+            if main_loop and main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    broadcast(json.dumps({"type": "voice", "voice": server_voice})),
+                    main_loop,
+                )
+            self._send_json({"voice": server_voice})
+
+        def _handle_control_request(self):
+            """Apply mute/volume/skip controls to host audio."""
+            body = self._read_json_body()
+            if not isinstance(body, dict) or not isinstance(body.get("action"), str):
+                self.send_error(400, "Missing action parameter")
+                return
+            action = body["action"].lower()
+            if action == "mute":
+                set_muted(True)
+            elif action == "unmute":
+                set_muted(False)
+            elif action == "toggle_mute":
+                set_muted(not audio_state["muted"])
+            elif action == "volume":
+                try:
+                    volume = float(body.get("value"))
+                except (TypeError, ValueError):
+                    self.send_error(400, "Invalid volume value")
+                    return
+                audio_state["volume"] = max(0.0, min(1.0, volume))
+                if audio_player is not None:
+                    audio_player.set_volume(audio_state["volume"])
+                broadcast_control_state()
+            elif action == "skip":
+                if audio_player is not None:
+                    audio_player.skip()
+                app_log("Skipped current message (remote)")
+            else:
+                self.send_error(400, f"Unknown action: {action}")
+                return
+            self._send_json(
+                {"muted": audio_state["muted"], "volume": audio_state["volume"]}
+            )
 
         def _handle_tts_request(self, parsed):
             """Validate query parameters, synthesize audio, and return MP3 data."""
@@ -433,7 +782,7 @@ def start_http_server() -> None:
                 self.send_error(400, "Missing or empty text parameter")
                 return
 
-            if len(text) > 200:
+            if len(text) > MAX_CHARS:
                 self.send_error(400, "Text too long")
                 return
 
@@ -457,9 +806,12 @@ def start_http_server() -> None:
             self.end_headers()
             self.wfile.write(audio)
 
-    socketserver.TCPServer.allow_reuse_address = True
+    class ThreadedHTTPServer(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
     try:
-        with socketserver.TCPServer(("127.0.0.1", HTTP_PORT), Handler) as httpd:
+        with ThreadedHTTPServer(("127.0.0.1", HTTP_PORT), Handler) as httpd:
             app_log(f"Web interface serving at http://localhost:{HTTP_PORT}")
             app_log(f"Serving files from {web_root}")
             httpd.serve_forever()
@@ -473,13 +825,65 @@ def start_http_server() -> None:
 
 async def main() -> None:
     """Start the HTTP/SSE services and run the Twitch listener indefinitely."""
-    global main_loop
+    global main_loop, audio_enabled, audio_player, speech_queue
+
+    parser = argparse.ArgumentParser(description="Twitch TTS engine with host audio")
+    parser.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="disable host-audio playback; the browser plays audio instead",
+    )
+    parser.add_argument(
+        "--audio",
+        action="store_true",
+        help="force host-audio playback even when config.json disables it",
+    )
+    args = parser.parse_args()
+
     main_loop = asyncio.get_running_loop()
     main_loop.set_exception_handler(quiet_connection_errors)
 
     app_log("TTS engine starting...")
     threading.Thread(target=start_http_server, daemon=True).start()
     await load_third_party_emotes()
+
+    # Host audio is enabled by default; config and CLI flags can override it.
+    audio_requested = AUDIO_ENABLED_BY_DEFAULT
+    if args.no_audio:
+        audio_requested = False
+    if args.audio:
+        audio_requested = True
+
+    if audio_requested:
+        if not AUDIO_IMPORT_OK:
+            app_log(
+                "pygame not installed - host audio disabled, browser mode active",
+                level="warn",
+            )
+        else:
+            try:
+                player = init_player(
+                    volume=audio_state["volume"],
+                    muted=audio_state["muted"],
+                    queue_size=QUEUE_SIZE,
+                )
+            except Exception as exc:
+                app_log(f"Could not initialize audio device: {exc}", level="warn")
+                player = None
+            if player is None:
+                app_log(
+                    "No audio output available - host audio disabled, browser mode active",
+                    level="warn",
+                )
+            else:
+                audio_player = player
+                audio_enabled = True
+                speech_queue = queue.Queue(maxsize=QUEUE_SIZE)
+                app_log("Host audio enabled - the browser page is now a remote control")
+                start_console_controls()
+                threading.Thread(
+                    target=audio_worker, name="audio-worker", daemon=True
+                ).start()
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", STREAM_PORT)
     app_log(f"Chat stream serving at http://localhost:{STREAM_PORT}")
@@ -500,3 +904,5 @@ if __name__ == "__main__":
         app_log("Process terminated.")
     finally:
         tts_executor.shutdown(wait=False)
+        if audio_player is not None:
+            audio_player.shutdown()

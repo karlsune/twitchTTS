@@ -61,3 +61,75 @@ body.chat-flash {
 #enableOverlay.hidden {
     display: none;
 }
+
+#controls {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+}
+
+#controls button,
+#controls select {
+    padding: 0.3rem 0.5rem;
+}
+
+#skipBtn {
+    background: #3a3a3a;
+    color: #e0e0e0;
+    border: 1px solid #555;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#skipBtn:hover {
+    background: #4a4a4a;
+}
+
+.mode-badge {
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #a0a0a0;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.6rem;
+}
+
+.mode-badge.host-audio {
+    background: #0f2a17;
+    border-color: #2e7d4f;
+    color: #6fd39a;
+}
+
+#nowPlaying {
+    background: #101010;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.95rem;
+}
+
+#nowPlaying #nowPlayingText {
+    color: #70cdff;
+}
+
+#nowPlaying #queueInfo {
+    color: #a0a0a0;
+    float: right;
+    font-size: 0.8rem;
+}
+
+#nowPlaying.now-playing-flash {
+    animation: now-playing-flash 600ms ease-out;
+}
+
+@keyframes now-playing-flash {
+    0% {
+        border-color: #70cdff;
+    }
+    100% {
+        border-color: #333;
+    }
+}
