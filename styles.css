@@ -1,3 +1,23 @@
+body {
+    background: #292929;
+}
+
+body.chat-flash {
+    animation: chat-flash 240ms ease-out;
+}
+
+@keyframes chat-flash {
+    0% {
+        background-color: #292929;
+    }
+    35% {
+        background-color: #3a3a3a;
+    }
+    100% {
+        background-color: #292929;
+    }
+}
+
 #engineLog {
     background: #101010;
     border: 1px solid #333;

@@ -1,3 +1,15 @@
+"""Run the Twitch chat listener, TTS API, and browser event stream.
+
+The process has three cooperating pieces:
+
+* an asyncio task that reads anonymous Twitch IRC messages;
+* a small HTTP server that serves the web UI and synthesizes audio; and
+* an asyncio SSE server that sends logs, voices, and accepted chat messages
+    to connected browser clients.
+
+Runtime settings are loaded from ``config.json`` next to this file.
+"""
+
 import asyncio
 import concurrent.futures
 import http.server
@@ -29,6 +41,7 @@ tts_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_
 
 
 def load_config() -> dict:
+    """Load the JSON configuration located beside the application file."""
     with CONFIG_PATH.open(encoding="utf-8") as config_file:
         return json.load(config_file)
 
@@ -42,6 +55,7 @@ DEFAULT_TTS_VOICE = CONFIG.get("tts_voice", "en-US-JennyNeural")
 
 
 def quiet_connection_errors(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Ignore normal browser disconnects while preserving other loop errors."""
     exc = context.get("exception")
     if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
         return
@@ -49,12 +63,14 @@ def quiet_connection_errors(loop: asyncio.AbstractEventLoop, context: dict) -> N
 
 
 def close_writer(writer: asyncio.StreamWriter) -> None:
+    """Close an asyncio stream unless it has already started closing."""
     if writer.is_closing():
         return
     writer.close()
 
 
 def app_log(message: str, level: str = "info") -> None:
+    """Store a log entry and broadcast it to currently connected browsers."""
     entry = {
         "type": "log",
         "level": level,
@@ -70,6 +86,7 @@ def app_log(message: str, level: str = "info") -> None:
 
 
 async def generate_tts_audio(text: str, voice: str) -> bytes:
+    """Generate an MP3 byte stream with the requested Edge TTS voice."""
     communicate = edge_tts.Communicate(text, voice)
     audio = bytearray()
     async for chunk in communicate.stream():
@@ -81,10 +98,12 @@ async def generate_tts_audio(text: str, voice: str) -> bytes:
 
 
 def generate_tts_audio_sync(text: str, voice: str) -> bytes:
+    """Expose async TTS generation to the thread-pool HTTP handler."""
     return asyncio.run(generate_tts_audio(text, voice))
 
 
 async def list_voices() -> list[dict]:
+    """Fetch Edge TTS voices and convert them to the browser-facing format."""
     voices = await edge_tts.list_voices()
     return [
         {
@@ -98,6 +117,7 @@ async def list_voices() -> list[dict]:
 
 
 def get_cached_voices() -> list[dict]:
+    """Return the cached voice list, loading it safely from any server thread."""
     global cached_voices
     with voices_lock:
         if cached_voices is not None:
@@ -138,6 +158,7 @@ async def preload_voices() -> None:
 
 
 async def _write_to_clients(message: bytes) -> None:
+    """Write an SSE frame to each client and remove failed connections."""
     if not connected_clients:
         return
 
@@ -158,10 +179,12 @@ async def _write_to_clients(message: bytes) -> None:
 
 
 async def broadcast(payload: str) -> None:
+    """Send a JSON payload as a server-sent event to all browser clients."""
     await _write_to_clients(f"data: {payload}\n\n".encode("utf-8"))
 
 
 async def send_log_history(writer: asyncio.StreamWriter) -> None:
+    """Replay buffered log entries to a newly connected browser."""
     with log_lock:
         history = list(log_buffer)
 
@@ -172,11 +195,13 @@ async def send_log_history(writer: asyncio.StreamWriter) -> None:
 
 
 def english_voices(voices: list[dict]) -> list[dict]:
+    """Prefer English voices, falling back to all voices if none are available."""
     filtered = [voice for voice in voices if voice["locale"].startswith("en-")]
     return filtered if filtered else voices
 
 
 async def send_voice_list(writer: asyncio.StreamWriter) -> None:
+    """Send the cached, browser-filtered voice list to one client."""
     with voices_lock:
         voices = list(cached_voices) if cached_voices else []
 
@@ -189,6 +214,7 @@ async def send_voice_list(writer: asyncio.StreamWriter) -> None:
 
 
 async def twitch_listener() -> None:
+    """Keep the Twitch IRC connection alive and reconnect after failures."""
     while True:
         try:
             await _listen_to_twitch_chat()
@@ -256,6 +282,7 @@ def parse_emote_ranges(emotes_tag: str) -> list[tuple[int, int]]:
 
 
 async def _listen_to_twitch_chat() -> None:
+    """Read Twitch IRC, filter eligible messages, and publish chat events."""
     reader, writer = await asyncio.open_connection("irc.chat.twitch.tv", 6667)
 
     # Request IRCv3 tags so Twitch tells us the exact emote character ranges.
@@ -294,7 +321,7 @@ async def _listen_to_twitch_chat() -> None:
         # Ignore empty or overly long messages.
         # Special users can send chat without the !tts prefix.
         # Other users must start messages with !tts.
-        is_special_user = user.lower() in ("shitemike", "dexfer")
+        is_special_user = user.lower() in ("shitemike", "dexfer", "jakethesnake0410")
         if is_special_user:
             if not text or len(text) > 200:
                 continue
@@ -311,6 +338,7 @@ async def _listen_to_twitch_chat() -> None:
 
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Serve one long-lived SSE client connection on the stream port."""
     peer = writer.get_extra_info("peername")
     header = (
         "HTTP/1.1 200 OK\r\n"
@@ -342,12 +370,14 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
 
 async def sse_heartbeat() -> None:
+    """Keep idle SSE connections alive through proxies and browser networking."""
     while True:
         await asyncio.sleep(15)
         await _write_to_clients(b": keepalive\n\n")
 
 
 def start_http_server() -> None:
+    """Serve static files and the HTTP endpoints for voices and TTS audio."""
     web_root = Path(__file__).parent
 
     class Handler(http.server.SimpleHTTPRequestHandler):
@@ -364,6 +394,7 @@ def start_http_server() -> None:
             super().end_headers()
 
         def do_GET(self):
+            """Route API requests before delegating static files to the base handler."""
             parsed = urllib.parse.urlparse(self.path)
             if parsed.path == "/api/tts":
                 self._handle_tts_request(parsed)
@@ -375,6 +406,7 @@ def start_http_server() -> None:
             super().do_GET()
 
         def _handle_voices_request(self):
+            """Return the cached voice list as JSON."""
             try:
                 voices = get_cached_voices()
             except Exception as exc:
@@ -392,6 +424,7 @@ def start_http_server() -> None:
             self.wfile.write(payload)
 
         def _handle_tts_request(self, parsed):
+            """Validate query parameters, synthesize audio, and return MP3 data."""
             params = urllib.parse.parse_qs(parsed.query)
             text = sanitize_chat_text(params.get("text", [""])[0])
             voice = params.get("voice", [DEFAULT_TTS_VOICE])[0] or DEFAULT_TTS_VOICE
@@ -439,6 +472,7 @@ def start_http_server() -> None:
 
 
 async def main() -> None:
+    """Start the HTTP/SSE services and run the Twitch listener indefinitely."""
     global main_loop
     main_loop = asyncio.get_running_loop()
     main_loop.set_exception_handler(quiet_connection_errors)

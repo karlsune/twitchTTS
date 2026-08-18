@@ -1,7 +1,7 @@
-import re
-
 """Sanitize chat text by stripping URLs, emojis, Twitch/BTTV/FFZ/7TV emotes,
 and extra whitespace before it is spoken aloud."""
+
+import re
 
 URL_PATTERN = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 EMOJI_PATTERN = re.compile(

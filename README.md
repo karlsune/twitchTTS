@@ -100,6 +100,42 @@ To integrate Twitch TTS Engine into OBS:
 4. Enable transparent background if your scene design supports it
 5. Optionally crop the control panel if only chat text should be visible on stream
 
+## Application Architecture
+
+`app.py` runs the service using one asyncio event loop plus a thread-pool-backed
+HTTP server:
+
+- Twitch IRC is read anonymously on port `6667`.
+- The web UI and HTTP API are served on `http_port` (default `8080`).
+- Browser clients connect to the server-sent event stream on `stream_port`
+  (default `8081`).
+- `emotes.py` loads third-party emote names from public BTTV, FFZ, and 7TV
+  endpoints. A failure only disables that emote source; TTS continues running.
+- `sanitize.py` removes Twitch emotes, URLs, emoji, third-party emotes, and
+  excess whitespace before text is sent to TTS.
+
+### Browser API
+
+The frontend connects to `http://localhost:8081` using SSE. Events are JSON
+objects with one of these types:
+
+| Type | Purpose |
+|------|---------|
+| `log` | Displays an engine status message |
+| `voices` | Populates the server voice selector |
+| `chat` | Displays and queues an accepted Twitch message |
+
+The HTTP API exposes `GET /api/voices` for the available voice list and
+`GET /api/tts?text=...&voice=...` for MP3 synthesis. Text is sanitized and
+limited to 200 characters before synthesis.
+
+### Startup and Shutdown
+
+`start_tts.bat` closes stale listeners on ports `8080` and `8081`, starts
+`app.py`, waits briefly for the HTTP server, and opens the browser UI. Stop the
+Python process with `Ctrl+C`; the TTS thread pool is then shut down without
+blocking application exit.
+
 ## Support
 
 For issues or feature requests, please refer to the project repository.

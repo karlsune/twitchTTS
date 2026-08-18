@@ -103,6 +103,12 @@
             }
         }
 
+        function flashForChatMessage() {
+            document.body.classList.remove('chat-flash');
+            void document.body.offsetWidth;
+            document.body.classList.add('chat-flash');
+        }
+
         function populateServerVoices(voices) {
             const englishVoices = voices.filter((voice) => voice.locale.startsWith('en-'));
             const list = englishVoices.length > 0 ? englishVoices : voices;
@@ -318,6 +324,12 @@
                 populateServerVoices(data.voices);
                 return;
             }
+
+            if (data.type !== 'chat') {
+                return;
+            }
+
+            flashForChatMessage();
 
             appendEngineLog({
                 time: new Date().toLocaleTimeString(),
