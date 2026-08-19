@@ -102,6 +102,23 @@ To list available voices, run:
 edge-tts --list-voices
 ```
 
+## Standalone App (Windows)
+
+The engine can run under a native tray shell instead of (or alongside) the
+browser UI:
+
+```bash
+python twitchtts_app.py
+```
+
+- Tray icon shows engine state: green (ok), red (error), grey (offline).
+- Tray menu: Open, Mute, About, Exit. Closing the window minimizes to tray
+  while the engine keeps running.
+- Build a standalone executable: run `build.bat` (produces
+  `dist/twitchTTS.exe`). The same binary hosts the engine via a hidden
+  `--engine` flag.
+
+
 ## Special Users
 
 Users listed in `special_users` can trigger voice synthesis without requiring a command prefix and bypass the per-user cooldown. Their messages are still subject to content sanitization and the `max_chars` limit. All other users must prefix their message with `command_prefix`.

@@ -41,8 +41,26 @@ except ImportError:
     init_player = None  # type: ignore[assignment]
     AUDIO_IMPORT_OK = False
 
-CONFIG_PATH = Path(__file__).with_name("config.json")
 LOG_BUFFER_SIZE = 50
+
+# Application base directory: next to the executable when frozen (PyInstaller),
+# next to this file when running from source. Bundled data files (web UI,
+# example config) live in the onefile extraction dir (_MEIPASS) when frozen.
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+    BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", BASE_DIR))
+else:
+    BASE_DIR = Path(__file__).resolve().parent
+    BUNDLE_DIR = BASE_DIR
+CONFIG_PATH = BASE_DIR / "config.json"
+
+# Lightweight runtime status for the standalone shell's tray icon.
+ENGINE_STATUS = {
+    "started_at": time.time(),
+    "irc_connected": False,
+    "last_error": None,
+    "last_error_at": 0.0,
+}
 
 connected_clients: set[asyncio.StreamWriter] = set()
 log_buffer: deque[dict] = deque(maxlen=LOG_BUFFER_SIZE)
@@ -71,6 +89,10 @@ def load_config() -> dict:
     """
     if not CONFIG_PATH.exists():
         example_path = CONFIG_PATH.with_name("config.example.json")
+        if not example_path.exists():
+            bundled = BUNDLE_DIR / "config.example.json"
+            if bundled.exists():
+                example_path = bundled
         if not example_path.exists():
             raise FileNotFoundError(
                 f"Neither {CONFIG_PATH.name} nor {example_path.name} was found. "
@@ -127,6 +149,15 @@ def app_log(message: str, level: str = "info") -> None:
         log_buffer.append(entry)
 
     print(f"[{entry['time']}] {message}", flush=True)
+
+    # Feed the status tracker used by /api/status and the tray shell.
+    if level == "error":
+        ENGINE_STATUS["last_error"] = message
+        ENGINE_STATUS["last_error_at"] = time.time()
+    elif "Connected anonymously" in message:
+        ENGINE_STATUS["irc_connected"] = True
+    elif "IRC connection lost" in message:
+        ENGINE_STATUS["irc_connected"] = False
 
     if main_loop and main_loop.is_running():
         asyncio.run_coroutine_threadsafe(broadcast(json.dumps(entry)), main_loop)
@@ -615,7 +646,7 @@ async def sse_heartbeat() -> None:
 
 def start_http_server() -> None:
     """Serve static files and the HTTP endpoints for voices and TTS audio."""
-    web_root = Path(__file__).parent
+    web_root = BUNDLE_DIR
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -667,7 +698,7 @@ def start_http_server() -> None:
             """Route API requests before delegating static files to the base handler."""
             parsed = urllib.parse.urlparse(self.path)
             if (
-                parsed.path in ("/api/tts", "/api/voices", "/api/config")
+                parsed.path in ("/api/tts", "/api/voices", "/api/config", "/api/status")
                 and self._reject_cross_origin()
             ):
                 return
@@ -676,6 +707,27 @@ def start_http_server() -> None:
                 return
             if parsed.path == "/api/voices":
                 self._handle_voices_request()
+                return
+            if parsed.path == "/api/status":
+                now = time.time()
+                recent_error = (
+                    ENGINE_STATUS["last_error"] is not None
+                    and now - ENGINE_STATUS["last_error_at"] < 60
+                )
+                status = "error" if (not ENGINE_STATUS["irc_connected"] or recent_error) else "ok"
+                body = json.dumps(
+                    {
+                        "status": status,
+                        "irc_connected": ENGINE_STATUS["irc_connected"],
+                        "last_error": ENGINE_STATUS["last_error"],
+                        "uptime": int(now - ENGINE_STATUS["started_at"]),
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
                 return
             if parsed.path == "/api/config":
                 self._handle_config_request()

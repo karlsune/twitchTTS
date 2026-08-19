@@ -7,3 +7,7 @@ venv/
 env/
 *.log
 config.json
+dist/
+build/
+*.spec
+%temp%/

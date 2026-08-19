@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Standalone tray shell (`twitchtts_app.py`): native window + system tray
+  with status color (green ok / red error / grey offline) and an
+  open/mute/about/exit menu; minimize-to-tray keeps the engine running.
+- Engine `/api/status` endpoint reporting connection and error state for
+  the tray icon.
+- PyInstaller build support (`build.bat`): the frozen executable hosts the
+  engine via a `--engine` flag.
+
 ## [0.1.1] - 2026-08-19
 
 ### Fixed
