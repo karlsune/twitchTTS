@@ -1,24 +1,48 @@
 """Play synthesized MP3 bytes on the host machine with pygame.
 
 ``pygame-ce`` (imported as ``pygame``) is used so the engine is
-self-contained — no external player binary is required. If pygame is missing
-or no audio device is available, :func:`init_player` returns ``None`` and the
-application falls back to browser-based playback.
+self-contained — no external player binary is required. pygame's
+``Sound()`` cannot decode MP3 from a buffer (it plays static noise), so
+MP3 bytes are decoded with ``miniaudio`` and re-wrapped as WAV before
+being handed to pygame. If pygame is missing or no audio device is
+available, :func:`init_player` returns ``None`` and the application falls
+back to browser-based playback.
 """
 
 from __future__ import annotations
 
+import io
 import os
 import queue
 import threading
+import wave
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
+import miniaudio  # noqa: E402
 import pygame  # noqa: E402
 
 MIXER_FREQUENCY = 44100
 MIXER_SIZE = -16
 MIXER_CHANNELS = 1
+
+
+def _mp3_to_wav(mp3_bytes: bytes) -> bytes:
+    """Decode MP3 bytes and wrap the PCM in a WAV container.
+
+    pygame's ``Sound(buffer=...)`` decodes WAV reliably but turns MP3
+    buffers into loud static noise, so host audio is converted here first.
+    """
+    decoded = miniaudio.decode(
+        mp3_bytes, output_format=miniaudio.SampleFormat.SIGNED16
+    )
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(decoded.nchannels)
+        wav.setsampwidth(2)
+        wav.setframerate(decoded.sample_rate)
+        wav.writeframes(decoded.samples)
+    return buf.getvalue()
 
 
 class AudioPlayer:
@@ -119,8 +143,8 @@ class AudioPlayer:
                 continue
 
             try:
-                sound = pygame.mixer.Sound(buffer=mp3_bytes)
-            except pygame.error:
+                sound = pygame.mixer.Sound(buffer=_mp3_to_wav(mp3_bytes))
+            except (pygame.error, miniaudio.MiniaudioError, OSError):
                 # Un-decodable or truncated MP3 from a failed synthesis; drop it.
                 continue
 

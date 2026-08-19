@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Host audio played synthesized speech as loud static noise. pygame's
+  `Sound()` cannot decode MP3 from a buffer, so host audio is now decoded
+  with `miniaudio` and re-wrapped as WAV before playback.
+
 ## [0.1.0] - 2026-08-19
 
 ### Added
