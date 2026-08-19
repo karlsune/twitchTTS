@@ -193,6 +193,21 @@ While `app.py` runs in a terminal, these keys control host playback:
 | `--no-audio` | Force browser-mode playback even when `audio.enabled` is true |
 | `--audio` | Force host-audio playback even when `audio.enabled` is false |
 
+## Roadmap
+
+Planned: a standalone desktop application for Windows and Linux, replacing
+the browser-source workflow.
+
+- Native window + system tray (stdlib `tkinter` first — no new runtime
+dependencies) wrapping the existing core: IRC listener, TTS synthesis,
+sanitization and host audio stay unchanged.
+- The browser UI stays available as a fallback and remote control.
+- Packaging: PyInstaller for Windows, PyInstaller/AppImage for Linux.
+
+Status: planning. The core is already UI-independent (the web UI is served
+files, not embedded logic), so the standalone shell can wrap it without
+restructuring.
+
 ## Support
 
 For issues or feature requests, please refer to the project repository.
