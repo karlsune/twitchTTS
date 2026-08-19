@@ -195,18 +195,25 @@ While `app.py` runs in a terminal, these keys control host playback:
 
 ## Roadmap
 
-Planned: a standalone desktop application for Windows and Linux, replacing
-the browser-source workflow.
+### Primary — standalone desktop app (Windows, then GNOME/KDE)
 
-- Native window + system tray (stdlib `tkinter` first — no new runtime
-dependencies) wrapping the existing core: IRC listener, TTS synthesis,
-sanitization and host audio stay unchanged.
+Native window + system tray replacing the browser-source workflow:
+
+- Engine (`app.py`) runs unchanged as a local service; a thin native shell
+  (`tkinter`/`ttk` + `pystray`) talks to it over the existing HTTP API.
+- Tray icon shows status color: green (ok), red (error), grey (offline);
+  tray menu: open, mute, about, exit. Minimize hides to tray.
+- Windows is the primary target; GNOME and KDE are secondary.
+- Packaging: PyInstaller (`twitchTTS.exe` / Linux binary).
 - The browser UI stays available as a fallback and remote control.
-- Packaging: PyInstaller for Windows, PyInstaller/AppImage for Linux.
 
-Status: planning. The core is already UI-independent (the web UI is served
-files, not embedded logic), so the standalone shell can wrap it without
-restructuring.
+### Secondary — web UI polish / remote control
+
+### Tertiary — GNU/Unix tool-suite rework
+
+Split the monolith into small composable commands (IRC, sanitize, TTS,
+play) that pipe over text streams, with plain-text config and stderr logs.
+Low priority; the standalone release ships first.
 
 ## Support
 
