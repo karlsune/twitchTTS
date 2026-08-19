@@ -17,7 +17,11 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":%STREAM_PORT%" ^| findstr "
     taskkill /PID %%p /F >nul 2>&1
 )
 
-start "TTS Engine" cmd /k "python app.py"
+REM Prefer the project virtual environment if present (it has pygame-ce installed).
+set "PYTHON=python"
+if exist ".venv\Scripts\python.exe" set "PYTHON=.venv\Scripts\python.exe"
+
+start "TTS Engine" cmd /k "%PYTHON% app.py"
 timeout /t 3 /nobreak > NUL
 start "" "http://127.0.0.1:%HTTP_PORT%/index.html?v=%RANDOM%"
 
