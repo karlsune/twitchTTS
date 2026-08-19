@@ -15,6 +15,7 @@ import asyncio
 import concurrent.futures
 import http.server
 import json
+import shutil
 import queue
 import socketserver
 import sys
@@ -63,7 +64,19 @@ last_speak_lock = threading.Lock()
 
 
 def load_config() -> dict:
-    """Load the JSON configuration located beside the application file."""
+    """Load the JSON configuration located beside the application file.
+
+    On first run, ``config.json`` is created from ``config.example.json``
+    so that a fresh checkout works without manual setup.
+    """
+    if not CONFIG_PATH.exists():
+        example_path = CONFIG_PATH.with_name("config.example.json")
+        if not example_path.exists():
+            raise FileNotFoundError(
+                f"Neither {CONFIG_PATH.name} nor {example_path.name} was found. "
+                "Copy config.example.json to config.json and edit it."
+            )
+        shutil.copyfile(example_path, CONFIG_PATH)
     with CONFIG_PATH.open(encoding="utf-8") as config_file:
         return json.load(config_file)
 

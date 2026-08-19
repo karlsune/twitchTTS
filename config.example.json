@@ -1,10 +1,10 @@
 {
-  "twitch_channel": "shitemike",
+  "twitch_channel": "your_channel_name",
   "http_port": 8080,
   "stream_port": 8081,
-  "tts_voice": "en-TZ-ElimuNeural",
+  "tts_voice": "en-US-JennyNeural",
   "command_prefix": "!tts",
-  "special_users": ["shitemike", "dexfer", "jakethesnake0410"],
+  "special_users": [],
   "cooldown_seconds": 3,
   "max_chars": 200,
   "audio": {

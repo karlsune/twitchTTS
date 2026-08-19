@@ -35,7 +35,9 @@ Twitch TTS Engine provides real-time voice synthesis for Twitch chat messages. I
 pip install -r requirements.txt
 ```
 
-2. Configure the application by editing `config.json`:
+2. Configure the application by editing `config.json`. It is created
+   automatically from `config.example.json` on first run. At minimum, set
+   your channel name:
 
 ```json
 {
@@ -194,3 +196,7 @@ While `app.py` runs in a terminal, these keys control host playback:
 ## Support
 
 For issues or feature requests, please refer to the project repository.
+
+## License
+
+Released under the [MIT License](LICENSE).
