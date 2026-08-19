@@ -6,11 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-19
+
 ### Fixed
 
 - Host audio played synthesized speech as loud static noise. pygame's
   `Sound()` cannot decode MP3 from a buffer, so host audio is now decoded
   with `miniaudio` and re-wrapped as WAV before playback.
+- `config.json` written with a UTF-8 BOM (Windows editors) no longer
+  crashes the engine at startup.
+- `start_tts.bat` now prefers the project virtual environment when present,
+  so host audio is enabled on setups where the system Python lacks
+  pygame-ce.
 
 ## [0.1.0] - 2026-08-19
 
