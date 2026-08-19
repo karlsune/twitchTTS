@@ -77,7 +77,7 @@ def load_config() -> dict:
                 "Copy config.example.json to config.json and edit it."
             )
         shutil.copyfile(example_path, CONFIG_PATH)
-    with CONFIG_PATH.open(encoding="utf-8") as config_file:
+    with CONFIG_PATH.open(encoding="utf-8-sig") as config_file:
         return json.load(config_file)
 
 
