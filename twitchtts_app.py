@@ -77,6 +77,8 @@ class TwitchTTSShell:
 
     # ------------------------------------------------------------------ tray
     def _build_tray(self) -> None:
+        import pystray  # GUI dep; only needed in shell mode (not --engine)
+
         menu = pystray.Menu(
             pystray.MenuItem("Open", self.open_window, default=True),
             pystray.MenuItem("Mute", self.toggle_mute),
@@ -581,8 +583,6 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
         return
-    import pystray  # noqa: F401  (GUI deps are not needed in --engine mode)
-
     TwitchTTSShell().run()
 
 
