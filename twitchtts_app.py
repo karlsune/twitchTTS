@@ -32,6 +32,9 @@ from tkinter import messagebox, ttk
 from config import get_config_path
 
 VERSION = "0.2.0"
+
+MODE_LABELS = {"Neural (edge-tts)": "edge", "System (offline)": "system"}
+MODE_KEYS = {key: label for label, key in MODE_LABELS.items()}
 # Next to the executable when frozen (PyInstaller), next to this file otherwise.
 BASE_DIR = os.path.dirname(
     os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__)
@@ -131,8 +134,6 @@ class TwitchTTSShell:
         self.mute_btn = ttk.Button(controls, text="Mute", command=self.toggle_mute, width=8)
         self.mute_btn.pack(side="left", padx=(0, 6))
         ttk.Button(controls, text="Skip", command=self.skip, width=8).pack(side="left", padx=(0, 12))
-        ttk.Button(controls, text="Options...", command=self._open_options, width=10).pack(side="left", padx=(0, 12))
-        ttk.Button(controls, text="About", command=self.about, width=8).pack(side="left", padx=(0, 12))
 
         ttk.Label(controls, text="Voice:").pack(side="left")
         self.voice_var = tk.StringVar()
@@ -141,6 +142,18 @@ class TwitchTTSShell:
         )
         self.voice_box.pack(side="left", padx=6)
         self.voice_box.bind("<<ComboboxSelected>>", self._voice_selected)
+
+        ttk.Label(controls, text="Engine:").pack(side="left")
+        self.mode_var = tk.StringVar()
+        self.mode_box = ttk.Combobox(
+            controls,
+            textvariable=self.mode_var,
+            state="readonly",
+            width=17,
+            values=list(MODE_LABELS.keys()),
+        )
+        self.mode_box.pack(side="left", padx=6)
+        self.mode_box.bind("<<ComboboxSelected>>", self._mode_selected)
 
         body = ttk.Frame(frame)
         body.pack(fill="both", expand=True, **pad)
@@ -180,8 +193,12 @@ class TwitchTTSShell:
         self.volume_label = ttk.Label(right, text="80%", width=5)
         self.volume_label.pack(pady=(2, 0))
 
-        self.status_label = ttk.Label(frame, text="â— offline", foreground="#8c8c8c")
-        self.status_label.pack(anchor="w", **pad)
+        bottom = ttk.Frame(frame)
+        bottom.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Button(bottom, text="About", command=self.about, width=8).pack(side="left")
+        self.status_label = ttk.Label(bottom, text="● offline", foreground="#8c8c8c")
+        self.status_label.pack(side="left", padx=(8, 0))
+        ttk.Button(bottom, text="Options...", command=self._open_options, width=10).pack(side="right")
 
     def hide_window(self) -> None:
         self.root.withdraw()
@@ -314,6 +331,10 @@ class TwitchTTSShell:
             self.log_queue.put(f"[{evt.get('time', '')}] {evt.get('message', '')}")
         elif etype == "voice":
             voice = evt.get("voice")
+            mode = evt.get("mode")
+            if mode:
+                self.root.after(0, lambda m=mode: self._set_mode_var(m))
+                self.root.after(0, self._load_voices)
             if voice:
                 self.root.after(0, lambda v=voice: self._select_voice(v))
         elif etype == "now_playing":
@@ -350,6 +371,15 @@ class TwitchTTSShell:
         label = self.voice_var.get()
         voice = self._voice_by_label.get(label, label)
         self._post("/api/voice", {"voice": voice})
+
+    def _set_mode_var(self, key: str) -> None:
+        self.mode_var.set(MODE_KEYS.get(key, "Neural (edge-tts)"))
+
+    def _mode_selected(self, _event=None) -> None:
+        key = MODE_LABELS.get(self.mode_var.get(), "edge")
+        self._post("/api/voice", {"mode": key})
+        # Engine switched mode; reload the matching voice list.
+        self.root.after(300, self._load_voices)
 
     def _volume_drag(self, _value=None) -> None:
         self.volume_label.config(text=f"{int(self.volume_var.get())}%")
@@ -391,9 +421,11 @@ class TwitchTTSShell:
         self.root.after(0, lambda: self.voice_box.config(values=options))
         # Preselect the engine's current voice.
         cfg = self._api("/api/config")
-        current = (cfg or {}).get("tts_voice")
-        if current:
-            self.root.after(0, lambda c=current: self._select_voice(c))
+        if cfg:
+            current = cfg.get("tts_voice")
+            if current:
+                self.root.after(0, lambda c=current: self._select_voice(c))
+            self.root.after(0, lambda m=cfg.get("tts_mode", "edge"): self._set_mode_var(m))
 
     def _select_voice(self, name: str) -> None:
         for label, voice in self._voice_by_label.items():
@@ -487,7 +519,7 @@ class TwitchTTSShell:
 
         ttk.Label(
             frame,
-            text="Channel, prefix and ports apply after restart.",
+            text="All changes are saved to config.json and apply after restart. Use Save & Restart to apply them now.",
             foreground="#666666",
         ).grid(row=len(rows), column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Label(

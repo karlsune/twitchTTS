@@ -37,8 +37,11 @@ def _apply_fades(pcm: bytes, sample_rate: int, channels: int) -> bytes:
     removes the click. Same treatment at the end avoids end-of-message pops.
     """
     fade_frames = max(1, int(sample_rate * 0.005))
-    data = array.array("h")
-    data.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    if isinstance(pcm, array.array):
+        data = pcm  # miniaudio already returns a signed-16 array
+    else:
+        data = array.array("h")
+        data.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
     n_frames = len(data) // channels
     if n_frames == 0:
         return pcm

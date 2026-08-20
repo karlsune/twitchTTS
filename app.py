@@ -12,12 +12,14 @@ Runtime settings are loaded from ``config.json`` next to this file.
 
 import argparse
 import asyncio
+import base64
 import concurrent.futures
 import http.server
 import json
 import queue
 import re
 import socketserver
+import subprocess
 import sys
 import threading
 import time
@@ -99,6 +101,14 @@ audio_state["muted"] = bool(AUDIO_CONFIG.get("muted", False))
 audio_state["volume"] = max(0.0, min(1.0, float(AUDIO_CONFIG.get("volume", 0.8))))
 server_voice = DEFAULT_TTS_VOICE
 
+# TTS engine mode: "edge" (cloud neural) or "system" (Windows SAPI, offline).
+TTS_MODE = str(CONFIG.get("tts_mode", "edge")).lower()
+if TTS_MODE not in ("edge", "system"):
+    TTS_MODE = "edge"
+
+system_voices_cache: list[dict] | None = None
+system_voices_lock = threading.Lock()
+
 
 
 def quiet_connection_errors(loop: asyncio.AbstractEventLoop, context: dict) -> None:
@@ -155,7 +165,7 @@ def canonical_voice(name: str) -> str | None:
         return re.sub(r"[\s_-]+", "", value.strip().lower())
 
     target = normalize(name)
-    for voice in get_cached_voices():
+    for voice in get_active_voices():
         if isinstance(voice, dict) and normalize(str(voice.get("name", ""))) == target:
             return voice["name"]
     return None
@@ -387,7 +397,9 @@ def start_console_controls() -> None:
 
 
 async def generate_tts_audio(text: str, voice: str) -> bytes:
-    """Generate an MP3 byte stream with the requested Edge TTS voice."""
+    """Generate audio bytes with the active TTS engine (edge or system)."""
+    if TTS_MODE == "system":
+        return await asyncio.to_thread(generate_system_tts, text, voice)
     communicate = edge_tts.Communicate(text, voice)
     audio = bytearray()
     async for chunk in communicate.stream():
@@ -401,6 +413,84 @@ async def generate_tts_audio(text: str, voice: str) -> bytes:
 def generate_tts_audio_sync(text: str, voice: str) -> bytes:
     """Expose async TTS generation to the thread-pool HTTP handler."""
     return asyncio.run(generate_tts_audio(text, voice))
+
+
+def list_system_voices() -> list[dict]:
+    """Enumerate Windows SAPI voices via PowerShell (cached). Offline mode."""
+    global system_voices_cache
+    with system_voices_lock:
+        if system_voices_cache is not None:
+            return system_voices_cache
+    script = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        "$s.GetInstalledVoices() | ForEach-Object { "
+        "$v = $_.VoiceInfo; "
+        "[PSCustomObject]@{ Name = $v.Name; Culture = $v.Culture.Name; Gender = $v.Gender } "
+        "} | ConvertTo-Json -Compress"
+    )
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        ).stdout.strip()
+        voices = json.loads(out) if out else []
+        if isinstance(voices, dict):
+            voices = [voices]
+        result = [
+            {
+                "name": v["Name"],
+                "gender": str(v.get("Gender", "")),
+                "locale": str(v.get("Culture", "")),
+                "label": f"{v['Name']} ({v.get('Gender', '')}, {v.get('Culture', '')})",
+            }
+            for v in voices
+            if v.get("Name")
+        ]
+        with system_voices_lock:
+            system_voices_cache = result
+        return result
+    except Exception as exc:
+        app_log(f"Could not enumerate system voices: {exc}", level="warn")
+        return []
+
+
+def generate_system_tts(text: str, voice: str) -> bytes:
+    """Synthesize speech with Windows SAPI and return WAV bytes (offline)."""
+    # Args are embedded base64-encoded: -Command joins trailing args with
+    # spaces into the script text, so passing them as args breaks parsing.
+    text_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    voice_b64 = base64.b64encode((voice or "").encode("utf-8")).decode("ascii")
+    script = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + text_b64 + "')); "
+        "$vname = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + voice_b64 + "')); "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        "if ($vname) { $s.SelectVoice($vname) }; "
+        "$m = New-Object System.IO.MemoryStream; "
+        "$s.SetOutputToWaveStream($m); "
+        "$s.Speak($text); "
+        "$s.SetOutputToNull(); "
+        "[Convert]::ToBase64String($m.ToArray())"
+    )
+    proc = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise RuntimeError(proc.stderr.strip() or "System TTS synthesis failed")
+    return base64.b64decode(proc.stdout.strip())
+
+
+def get_active_voices() -> list[dict]:
+    """The voice list for the active TTS mode (edge or system)."""
+    if TTS_MODE == "system":
+        return list_system_voices()
+    return get_cached_voices()
 
 
 async def list_voices() -> list[dict]:
@@ -448,6 +538,9 @@ async def load_third_party_emotes() -> None:
 
 async def preload_voices() -> None:
     """Warm up the voice list cache before handling HTTP requests."""
+    if TTS_MODE == "system":
+        # System voices are local and cheap; load them lazily instead.
+        return
     global cached_voices
     try:
         voices = await list_voices()
@@ -502,9 +595,8 @@ def english_voices(voices: list[dict]) -> list[dict]:
 
 
 async def send_voice_list(writer: asyncio.StreamWriter) -> None:
-    """Send the cached, browser-filtered voice list to one client."""
-    with voices_lock:
-        voices = list(cached_voices) if cached_voices else []
+    """Send the active-mode voice list to one client."""
+    voices = get_active_voices()
 
     if not voices:
         return
@@ -819,9 +911,9 @@ def start_http_server() -> None:
             self.send_error(404, "Not found")
 
         def _handle_voices_request(self):
-            """Return the cached voice list as JSON."""
+            """Return the voice list for the active TTS mode as JSON."""
             try:
-                voices = get_cached_voices()
+                voices = get_active_voices()
             except Exception as exc:
                 app_log(f"Failed to load voices: {exc}", level="error")
                 self.send_error(500, "Failed to load voices")
@@ -836,6 +928,7 @@ def start_http_server() -> None:
                     "http_port": HTTP_PORT,
                     "stream_port": STREAM_PORT,
                     "tts_voice": server_voice,
+                    "tts_mode": TTS_MODE,
                     "command_prefix": COMMAND_PREFIX,
                     "special_users": sorted(SPECIAL_USERS),
                     "cooldown_seconds": int(COOLDOWN_SECONDS),
@@ -852,28 +945,43 @@ def start_http_server() -> None:
             )
 
         def _handle_voice_request(self):
-            """Set the voice used for host-audio synthesis."""
-            global server_voice
+            """Set the voice (and optionally the TTS engine mode) for host audio."""
+            global server_voice, TTS_MODE
             body = self._read_json_body()
-            if not isinstance(body, dict) or not isinstance(body.get("voice"), str):
+            if not isinstance(body, dict):
                 self.send_error(400, "Missing voice parameter")
                 return
-            voice = body["voice"].strip()
-            if not voice:
-                self.send_error(400, "Missing voice parameter")
+
+            mode = str(body.get("mode", TTS_MODE)).lower()
+            if mode not in ("edge", "system"):
+                self.send_error(400, f"Unknown TTS mode: {mode}")
                 return
-            server_voice = voice
-            app_log(f"Host audio voice set to {server_voice}")
+            mode_changed = mode != TTS_MODE
+            TTS_MODE = mode
+
+            if "voice" in body:
+                voice = body["voice"].strip() if isinstance(body["voice"], str) else ""
+                if not voice:
+                    self.send_error(400, "Missing voice parameter")
+                    return
+                server_voice = voice
+
+            app_log(f"Host audio: mode={TTS_MODE}, voice={server_voice}")
             if main_loop and main_loop.is_running():
                 asyncio.run_coroutine_threadsafe(
-                    broadcast(json.dumps({"type": "voice", "voice": server_voice})),
+                    broadcast(json.dumps({"type": "voice", "voice": server_voice, "mode": TTS_MODE})),
                     main_loop,
                 )
-            self._send_json({"voice": server_voice})
+                if mode_changed:
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast(json.dumps({"type": "voices", "voices": get_active_voices()})),
+                        main_loop,
+                    )
+            self._send_json({"voice": server_voice, "mode": TTS_MODE})
 
         def _handle_config_save(self):
             """Persist configuration and apply the runtime-only parts immediately."""
-            global server_voice
+            global server_voice, TTS_MODE
             body = self._read_json_body()
             if not isinstance(body, dict):
                 self.send_error(400, "Invalid config payload")
@@ -919,9 +1027,12 @@ def start_http_server() -> None:
                 app_log(f"Voice set to {server_voice} (from saved config)")
                 if main_loop and main_loop.is_running():
                     asyncio.run_coroutine_threadsafe(
-                        broadcast(json.dumps({"type": "voice", "voice": server_voice})),
+                        broadcast(json.dumps({"type": "voice", "voice": server_voice, "mode": TTS_MODE})),
                         main_loop,
                     )
+            if isinstance(merged.get("tts_mode"), str) and merged["tts_mode"].strip() in ("edge", "system"):
+                TTS_MODE = merged["tts_mode"].strip()
+                app_log(f"TTS mode set to {TTS_MODE} (from saved config)")
             if isinstance(audio, dict):
                 if "muted" in audio:
                     set_muted(bool(audio["muted"]))

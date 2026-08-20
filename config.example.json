@@ -7,6 +7,7 @@
   "special_users": [],
   "cooldown_seconds": 3,
   "max_chars": 200,
+  "tts_mode": "edge",
   "close_to_tray": true,
   "audio": {
     "enabled": true,
