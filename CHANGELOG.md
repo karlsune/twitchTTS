@@ -20,6 +20,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (which lacks pystray/PIL) and PyInstaller silently skipped the missing
   imports. `build.bat` now prefers `.venv\Scripts\python.exe`, and
   `--engine` mode no longer imports GUI dependencies at all.
+- Host audio was disabled in the frozen exe (`No module named
+  '_cffi_backend'`): pygame-ce needs cffi, which PyInstaller did not
+  bundle. `build.bat` now passes `--hidden-import cffi` and
+  `--hidden-import _cffi_backend`.
 - The frozen app now resolves `config.json` and `LICENSE` next to the
   executable (previously it looked inside the onefile temp extraction
   directory).
@@ -31,6 +35,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - New **Options...** window in the tray app: edit channel, voice, command
   prefix, cooldown, max length, special users and audio settings from the
   GUI. "Save & Restart" applies channel/prefix/port changes immediately.
+- Options can now be saved from the GUI reliably; failures are shown in a
+  dialog instead of failing silently.
+- Mute/unmute button and tray action fixed (were sending the inverted
+  action); the tray menu item is now checkable and the tray icon shows a
+  red slash + "muted" title while muted.
+- Volume slider moved to a vertical control beside the log.
+- About window opens from the tray menu even when the main window is
+  hidden, and an About button was added to the main window.
+- New `close_to_tray` config option: the window close button can minimize
+  to tray (default) or exit the whole app.
+- Engine log lines are no longer shown twice in the tray window (the log
+  was arriving over both SSE and the engine's stdout).
 - The standalone exe now stores `config.json` in `%APPDATA%\TwitchTTS`
   (per-user app data, Windows convention) instead of next to the binary,
   so no JSON files appear where the exe is placed. Existing configs next
@@ -41,6 +57,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`!voice` chat command** (host-audio mode): viewers can set their own
+  TTS voice (`!voice <name>`, `!voice` to check, `!voice reset` to clear).
+  Voices are matched loosely (case/hyphens ignored), confirmed aloud in the
+  chosen voice, and remembered per user across restarts
+  (`user_voices.json`).
 - Standalone tray shell (`twitchtts_app.py`): native window + system tray
   with status color (green ok / red error / grey offline) and an
   open/mute/about/exit menu; minimize-to-tray keeps the engine running.

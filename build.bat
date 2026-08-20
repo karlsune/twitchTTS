@@ -15,6 +15,8 @@ if exist ".venv\Scripts\python.exe" (
   --add-data "config.example.json;." ^
   --add-data "LICENSE;." ^
   --add-data "THIRD-PARTY-NOTICES.md;." ^
+  --hidden-import cffi ^
+  --hidden-import _cffi_backend ^
   --hidden-import pystray._win32 ^
   twitchtts_app.py
 echo.

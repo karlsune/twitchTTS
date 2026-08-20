@@ -99,6 +99,19 @@ window instead of by hand.
 | `audio.volume` | `0.8` | Host playback volume (0.0–1.0) |
 | `audio.muted` | `false` | Mute host playback without dropping the queue |
 | `audio.queue_size` | `50` | Maximum number of pending messages buffered for synthesis |
+| `close_to_tray` | `true` | Close button minimizes to tray; set `false` to exit the whole app instead |
+
+### Viewer voice command (host-audio mode)
+
+Viewers can set their own TTS voice from chat:
+
+- `!voice <name>` — set your voice (e.g. `!voice en-us-aria-neural`; names
+  match loosely, hyphens/underscores/case are ignored)
+- `!voice` — hear/check your current voice
+- `!voice reset` — remove your override
+
+Overrides are confirmed aloud in the chosen voice and remembered per user
+across restarts (`user_voices.json` next to `config.json`).
 
 To list available voices, run:
 
@@ -135,6 +148,20 @@ python twitchtts_app.py
 ## Special Users
 
 Users listed in `special_users` can trigger voice synthesis without requiring a command prefix and bypass the per-user cooldown. Their messages are still subject to content sanitization and the `max_chars` limit. All other users must prefix their message with `command_prefix`.
+
+## Chat Commands
+
+| Command | Who | Effect |
+|---------|-----|--------|
+| `!tts <text>` | everyone | Speaks `<text>` (prefix configurable via `command_prefix`) |
+| `!voice <name>` | everyone (host-audio mode) | Sets your personal TTS voice; your messages are then spoken with it |
+| `!voice` | everyone (host-audio mode) | Tells you which voice you currently have |
+| `!voice reset` | everyone (host-audio mode) | Clears your personal voice override |
+
+Voice names are matched loosely (case and hyphens don't matter): `!voice en-us-aria-neural`
+and `!voice en-US-AriaNeural` both work. Per-user voices are remembered across
+restarts (`user_voices.json` next to `config.json`) and only apply to host-audio
+playback.
 
 ## OBS Integration
 

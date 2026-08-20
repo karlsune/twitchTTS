@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -26,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from config import get_config_path
 
@@ -62,6 +63,7 @@ class TwitchTTSShell:
         self.engine: subprocess.Popen | None = None
         self.state = "offline"
         self.muted = False
+        self.close_to_tray = True
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.port = 8080
         self.stream_port = 8081
@@ -81,7 +83,7 @@ class TwitchTTSShell:
 
         menu = pystray.Menu(
             pystray.MenuItem("Open", self.open_window, default=True),
-            pystray.MenuItem("Mute", self.toggle_mute),
+            pystray.MenuItem("Mute", self.toggle_mute, checked=lambda item: self.muted),
             pystray.MenuItem("About", self.about),
             pystray.MenuItem("Exit", self.exit_app),
         )
@@ -90,7 +92,7 @@ class TwitchTTSShell:
         )
         threading.Thread(target=self.tray.run, daemon=True).start()
 
-    def _tray_image(self, state: str) -> Image.Image:
+    def _tray_image(self, state: str, muted: bool = False) -> Image.Image:
         from PIL import Image, ImageDraw
 
         color = COLORS.get(state, COLORS["offline"])
@@ -98,20 +100,26 @@ class TwitchTTSShell:
         d = ImageDraw.Draw(img)
         d.ellipse((4, 4, 60, 60), fill=color, outline=(30, 30, 30), width=3)
         d.polygon([(24, 25), (34, 25), (46, 15), (46, 49), (34, 39), (24, 39)], fill=(255, 255, 255))
+        if muted:
+            d.line((12, 12, 52, 52), fill=(220, 40, 40), width=7)
         return img
+
+    def _refresh_tray(self) -> None:
+        suffix = " — muted" if self.muted else ""
+        self.tray.icon = self._tray_image(self.state, self.muted)
+        self.tray.title = f"Twitch TTS Engine — {self.state}{suffix}"
+        self.tray.update_menu()
 
     def _set_state(self, state: str) -> None:
         if state != self.state:
             self.state = state
-            self.tray.icon = self._tray_image(state)
-            self.tray.title = f"Twitch TTS Engine — {state}"
-            self.tray.update_menu()
+            self._refresh_tray()
 
     # ---------------------------------------------------------------- window
     def _build_window(self) -> None:
         self.root = tk.Tk()
         self.root.title("Twitch TTS Engine")
-        self.root.geometry("520x420")
+        self.root.geometry("560x440")
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
 
         pad = {"padx": 8, "pady": 4}
@@ -124,6 +132,7 @@ class TwitchTTSShell:
         self.mute_btn.pack(side="left", padx=(0, 6))
         ttk.Button(controls, text="Skip", command=self.skip, width=8).pack(side="left", padx=(0, 12))
         ttk.Button(controls, text="Options...", command=self._open_options, width=10).pack(side="left", padx=(0, 12))
+        ttk.Button(controls, text="About", command=self.about, width=8).pack(side="left", padx=(0, 12))
 
         ttk.Label(controls, text="Voice:").pack(side="left")
         self.voice_var = tk.StringVar()
@@ -133,32 +142,43 @@ class TwitchTTSShell:
         self.voice_box.pack(side="left", padx=6)
         self.voice_box.bind("<<ComboboxSelected>>", self._voice_selected)
 
-        vol = ttk.Frame(frame)
-        vol.pack(fill="x", **pad)
-        ttk.Label(vol, text="Volume").pack(side="left")
-        self.volume_var = tk.DoubleVar(value=80)
-        self.volume_scale = ttk.Scale(
-            vol, from_=0, to=100, variable=self.volume_var, command=self._volume_drag
-        )
-        self.volume_scale.pack(side="left", fill="x", expand=True, padx=8)
-        self.volume_label = ttk.Label(vol, text="80%", width=5)
-        self.volume_label.pack(side="left")
+        body = ttk.Frame(frame)
+        body.pack(fill="both", expand=True, **pad)
 
-        now = ttk.Frame(frame)
-        now.pack(fill="x", **pad)
+        left = ttk.Frame(body)
+        left.pack(side="left", fill="both", expand=True)
+
+        now = ttk.Frame(left)
+        now.pack(fill="x")
         ttk.Label(now, text="Now Playing", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        self.now_label = ttk.Label(now, text="—", wraplength=480, justify="left")
+        self.now_label = ttk.Label(now, text="—", wraplength=440, justify="left")
         self.now_label.pack(anchor="w", pady=(2, 0))
         self.queue_label = ttk.Label(now, text="", foreground="#666666")
         self.queue_label.pack(anchor="w")
 
-        log_frame = ttk.Frame(frame)
-        log_frame.pack(fill="both", expand=True, **pad)
+        log_frame = ttk.Frame(left)
+        log_frame.pack(fill="both", expand=True, pady=(6, 0))
         self.log_text = tk.Text(log_frame, height=10, state="disabled", wrap="word")
         self.log_text.pack(side="left", fill="both", expand=True)
         scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         scroll.pack(side="right", fill="y")
         self.log_text.config(yscrollcommand=scroll.set)
+
+        right = ttk.Frame(body)
+        right.pack(side="right", fill="y", padx=(10, 0))
+        ttk.Label(right, text="Volume").pack()
+        self.volume_var = tk.DoubleVar(value=80)
+        self.volume_scale = ttk.Scale(
+            right,
+            from_=100,
+            to=0,
+            orient="vertical",
+            variable=self.volume_var,
+            command=self._volume_drag,
+        )
+        self.volume_scale.pack(fill="y", expand=True)
+        self.volume_label = ttk.Label(right, text="80%", width=5)
+        self.volume_label.pack(pady=(2, 0))
 
         self.status_label = ttk.Label(frame, text="● offline", foreground="#8c8c8c")
         self.status_label.pack(anchor="w", **pad)
@@ -206,12 +226,26 @@ class TwitchTTSShell:
         cfg = _read_config()
         self.port = int(cfg.get("http_port", 8080))
         self.stream_port = int(cfg.get("stream_port", 8081))
+        self.close_to_tray = bool(cfg.get("close_to_tray", True))
+        self._apply_close_behavior()
         threading.Thread(target=self._load_voices, daemon=True).start()
+
+    def _apply_close_behavior(self) -> None:
+        """Close button minimizes to tray or exits the whole app, per config."""
+        if self.close_to_tray:
+            self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
+        else:
+            self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
 
     def _engine_reader(self) -> None:
         assert self.engine is not None and self.engine.stdout is not None
         for line in self.engine.stdout:
-            self.log_queue.put(line.rstrip())
+            stripped = line.rstrip()
+            # app_log() lines arrive over SSE too; only surface unexpected
+            # stdout here (tracebacks, warnings) to avoid double logging.
+            if re.match(r"^\[\d{2}:\d{2}:\d{2}\] ", stripped):
+                continue
+            self.log_queue.put(stripped)
         self.log_queue.put("[engine exited]")
 
     def _api(self, path: str, timeout: float = 4.0) -> dict | None:
@@ -292,12 +326,16 @@ class TwitchTTSShell:
         if "muted" in evt:
             self.muted = bool(evt["muted"])
             self.mute_btn.config(text="Unmute" if self.muted else "Mute")
+            self._refresh_tray()
 
     # -------------------------------------------------------------- controls
     def toggle_mute(self, icon=None, item=None) -> None:
+        # Ask the engine to flip state; update locally optimistically and let
+        # the SSE control events re-sync if the request failed.
+        self._post("/api/control", {"action": "toggle_mute"})
         self.muted = not self.muted
-        self._post("/api/control", {"action": "unmute" if self.muted else "mute"})
         self.mute_btn.config(text="Unmute" if self.muted else "Mute")
+        self._refresh_tray()
 
     def skip(self) -> None:
         self._post("/api/control", {"action": "skip"})
@@ -373,6 +411,7 @@ class TwitchTTSShell:
 
     def _open_options(self) -> None:
         """Options window: edit config.json from the GUI instead of by hand."""
+        self.root.deiconify()  # dialogs need a viewable parent (tray-only case)
         cfg = self._api("/api/config") or {}
         voices = self._api("/api/voices") or []
 
@@ -435,6 +474,9 @@ class TwitchTTSShell:
         queue_var = tk.StringVar(value=str(audio.get("queue_size", 50)))
         add_row("Audio queue size", ttk.Spinbox(frame, from_=1, to=500, textvariable=queue_var, width=8))
 
+        close_to_tray_var = tk.BooleanVar(value=bool(cfg.get("close_to_tray", True)))
+        add_row("Close button minimizes to tray", ttk.Checkbutton(frame, variable=close_to_tray_var))
+
         for i, (label, widget) in enumerate(rows):
             ttk.Label(frame, text=label).grid(row=i, column=0, sticky="w", padx=(0, 8), pady=3)
             widget.grid(row=i, column=1, sticky="w", pady=3)
@@ -456,20 +498,21 @@ class TwitchTTSShell:
                 "twitch_channel": channel_var.get().strip(),
                 "tts_voice": by_label.get(voice_var.get(), voice_var.get()),
                 "command_prefix": prefix_var.get().strip() or "!tts",
-                "cooldown_seconds": int(cooldown_var.get() or 0),
-                "max_chars": int(maxchars_var.get() or 200),
+                "cooldown_seconds": int(float(cooldown_var.get() or 0)),
+                "max_chars": int(float(maxchars_var.get() or 200)),
                 "special_users": special,
+                "close_to_tray": close_to_tray_var.get(),
                 "audio": {
                     "volume": max(0.0, min(1.0, volume_var.get() / 100.0)),
                     "muted": muted_var.get(),
-                    "queue_size": int(queue_var.get() or 50),
+                    "queue_size": int(float(queue_var.get() or 50)),
                 },
             }
 
         def save() -> bool:
-            payload = collect()
-            data = json.dumps(payload).encode("utf-8")
             try:
+                payload = collect()
+                data = json.dumps(payload).encode("utf-8")
                 req = urllib.request.Request(
                     f"http://127.0.0.1:{self.port}/api/config",
                     data=data,
@@ -478,18 +521,27 @@ class TwitchTTSShell:
                 )
                 with urllib.request.urlopen(req, timeout=6.0) as resp:
                     resp.read()
-            except (OSError, urllib.error.URLError) as exc:
+            except Exception as exc:  # noqa: BLE001 - surface any failure to the user
                 self._log(f"Could not save options: {exc}")
+                messagebox.showerror(
+                    "Twitch TTS Options",
+                    f"Could not save options:\n{exc}",
+                    parent=win,
+                )
                 return False
             self._log("Options saved.")
             return True
 
         def on_save() -> None:
             if save():
+                self.close_to_tray = close_to_tray_var.get()
+                self._apply_close_behavior()
                 win.destroy()
 
         def on_save_restart() -> None:
             if save():
+                self.close_to_tray = close_to_tray_var.get()
+                self._apply_close_behavior()
                 win.destroy()
                 self._restart_engine()
 
@@ -525,6 +577,7 @@ class TwitchTTSShell:
         webbrowser.open("https://github.com/karlsune/twitchTTS")
 
     def about(self, icon=None, item=None) -> None:
+        self.root.deiconify()  # dialogs need a viewable parent (tray-only case)
         win = tk.Toplevel(self.root)
         win.title("About Twitch TTS Engine")
         win.resizable(False, False)

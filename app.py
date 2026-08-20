@@ -16,6 +16,7 @@ import concurrent.futures
 import http.server
 import json
 import queue
+import re
 import socketserver
 import sys
 import threading
@@ -27,7 +28,7 @@ from pathlib import Path
 
 import edge_tts
 
-from config import get_config_path, load_config, save_config
+from config import get_config_dir, get_config_path, load_config, save_config
 from emotes import fetch_emote_names
 from sanitize import sanitize_chat_text
 
@@ -35,11 +36,13 @@ try:
     from audio import AudioPlayer, init_player
 
     AUDIO_IMPORT_OK = True
-except ImportError:
-    # pygame not installed: host audio stays disabled, browser mode still works.
+    AUDIO_IMPORT_ERROR = ""
+except ImportError as _audio_import_exc:
+    # pygame/miniaudio not available: host audio stays disabled, browser mode still works.
     AudioPlayer = None  # type: ignore[assignment]
     init_player = None  # type: ignore[assignment]
     AUDIO_IMPORT_OK = False
+    AUDIO_IMPORT_ERROR = str(_audio_import_exc)
 
 LOG_BUFFER_SIZE = 50
 
@@ -111,6 +114,84 @@ def close_writer(writer: asyncio.StreamWriter) -> None:
     if writer.is_closing():
         return
     writer.close()
+
+
+# ---------------------------------------------------------------------------
+# Per-user voice overrides (host-audio mode): viewers pick a voice with the
+# ``!voice <name>`` chat command; their messages are synthesized with it.
+# Persisted next to config.json as user_voices.json.
+# ---------------------------------------------------------------------------
+USER_VOICES_PATH = Path(get_config_dir()) / "user_voices.json"
+user_voices: dict[str, str] = {}
+user_voices_lock = threading.Lock()
+
+
+def load_user_voices() -> None:
+    """Load persisted per-user voice overrides from disk."""
+    global user_voices
+    try:
+        with open(USER_VOICES_PATH, encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            user_voices = {str(k).lower(): str(v) for k, v in loaded.items() if str(v)}
+    except (OSError, json.JSONDecodeError):
+        user_voices = {}
+
+
+def save_user_voices() -> None:
+    """Persist per-user voice overrides to disk."""
+    try:
+        USER_VOICES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(USER_VOICES_PATH, "w", encoding="utf-8") as f:
+            json.dump(user_voices, f, indent=2, ensure_ascii=False)
+    except OSError as exc:
+        app_log(f"Could not save user voices: {exc}", level="error")
+
+
+def canonical_voice(name: str) -> str | None:
+    """Return the canonical edge-tts ShortName for a fuzzy (case/hyphen-insensitive) match."""
+
+    def normalize(value: str) -> str:
+        return re.sub(r"[\s_-]+", "", value.strip().lower())
+
+    target = normalize(name)
+    for voice in get_cached_voices():
+        if isinstance(voice, dict) and normalize(str(voice.get("name", ""))) == target:
+            return voice["name"]
+    return None
+
+
+def resolve_voice(user: str) -> str:
+    """The voice to use for a user's message: personal override or default."""
+    with user_voices_lock:
+        return user_voices.get(user.lower()) or server_voice
+
+
+def handle_voice_command(user: str, arg: str) -> None:
+    """Process a viewer's ``!voice`` command (host-audio mode only)."""
+    if not audio_enabled:
+        return
+    key = user.lower()
+    if not arg or arg.lower() in ("status", "?"):
+        current = user_voices.get(key) or DEFAULT_TTS_VOICE
+        enqueue_speech(user, f"Your voice is {current}")
+        return
+    if arg.lower() in ("reset", "default", "off"):
+        with user_voices_lock:
+            had = user_voices.pop(key, None)
+            if had is not None:
+                save_user_voices()
+        enqueue_speech(user, "Your voice override was removed" if had else "You had no voice override")
+        return
+    canonical = canonical_voice(arg)
+    if canonical is None:
+        enqueue_speech(user, f"Unknown voice {arg}. Try one from the voice list in the app options.")
+        return
+    with user_voices_lock:
+        user_voices[key] = canonical
+        save_user_voices()
+    app_log(f"Voice for {user} set to {canonical}")
+    enqueue_speech(user, f"Your voice is now {canonical}")
 
 
 def app_log(message: str, level: str = "info") -> None:
@@ -222,7 +303,7 @@ def enqueue_speech(user: str, text: str) -> None:
         except queue.Empty:
             pass
         app_log("Audio queue full: dropped oldest message", level="warn")
-    speech_queue.put_nowait((user, text))
+    speech_queue.put_nowait((user, text, resolve_voice(user)))
     broadcast_control_state()
 
 
@@ -234,9 +315,9 @@ def audio_worker() -> None:
         item = speech_queue.get()
         if item is None:
             return
-        user, text = item
+        user, text, voice = item
         try:
-            mp3 = generate_tts_audio_sync(text, server_voice)
+            mp3 = generate_tts_audio_sync(text, voice)
         except Exception as exc:
             app_log(f"TTS generation failed for {user}: {exc}", level="error")
             continue
@@ -536,6 +617,12 @@ async def _listen_to_twitch_chat() -> None:
         raw_text = parsed["trailing"]
         emote_ranges = parse_emote_ranges(parsed["tags"].get("emotes", ""))
 
+        # Viewer voice command (!voice <name> | reset | status). Host audio only.
+        lower_raw = raw_text.strip().lower()
+        if lower_raw.startswith("!voice") and (len(lower_raw) == 6 or lower_raw[6] in (" ", "\t")):
+            handle_voice_command(user, raw_text[6:].strip())
+            continue
+
         text = sanitize_chat_text(raw_text, emote_ranges, third_party_emotes)
 
         # Ignore empty or overly long messages.
@@ -751,7 +838,8 @@ def start_http_server() -> None:
                     "tts_voice": server_voice,
                     "command_prefix": COMMAND_PREFIX,
                     "special_users": sorted(SPECIAL_USERS),
-                    "cooldown_seconds": COOLDOWN_SECONDS,
+                    "cooldown_seconds": int(COOLDOWN_SECONDS),
+                    "close_to_tray": bool(CONFIG.get("close_to_tray", True)),
                     "max_chars": MAX_CHARS,
                     "audio_enabled": audio_enabled,
                     "audio": {
@@ -792,7 +880,12 @@ def start_http_server() -> None:
                 return
 
             merged = dict(CONFIG)
+            existing_audio = merged.get("audio")
             merged.update(body)
+
+            # Keep audio keys the shell did not send (e.g. "enabled").
+            if isinstance(body.get("audio"), dict) and isinstance(existing_audio, dict):
+                merged["audio"] = {**existing_audio, **body["audio"]}
 
             # Coerce known numeric fields so a bad value can't wedge the app.
             for key in ("http_port", "stream_port", "cooldown_seconds", "max_chars"):
@@ -946,6 +1039,7 @@ async def main() -> None:
     main_loop.set_exception_handler(quiet_connection_errors)
 
     app_log("TTS engine starting...")
+    load_user_voices()
     threading.Thread(target=start_http_server, daemon=True).start()
     await load_third_party_emotes()
 
@@ -959,7 +1053,8 @@ async def main() -> None:
     if audio_requested:
         if not AUDIO_IMPORT_OK:
             app_log(
-                "pygame not installed - host audio disabled, browser mode active",
+                f"Host audio disabled (pygame/miniaudio import failed: "
+                f"{AUDIO_IMPORT_ERROR}) - browser mode active",
                 level="warn",
             )
         else:
