@@ -61,6 +61,35 @@ http://localhost:8080/index.html
 
 You can use this URL directly in a browser or as an OBS browser source.
 
+## System Requirements
+
+Neural voice synthesis happens on Microsoft's servers, not on the machine
+running the engine: `edge-tts` (the default **Server (Neural)** mode) calls
+Microsoft's Edge TTS cloud service and streams back an MP3. Local
+requirements are therefore minimal.
+
+| Requirement | Minimum |
+|-------------|---------|
+| OS | Windows, Linux, or macOS with Python 3.10+ |
+| CPU | 2 cores, any architecture (a Raspberry Pi-class device is fine) |
+| RAM | 1 GB (the engine itself uses ~100 MB) |
+| Disk | 100 MB |
+| Network | Internet connection (required for Server (Neural) mode) |
+| Audio device | Only needed for host-audio playback |
+
+- **Server (Neural) mode** (default) — synthesis is performed cloud-side by
+  Microsoft's Edge TTS service, so local CPU/GPU performance is irrelevant.
+  Latency per message is dominated by the network round trip (~0.5–2 s).
+- **Browser mode** (Web Speech API fallback) — runs fully on-device using the
+  operating system's installed voices. It works offline, needs no special
+  hardware, and voice quality depends on the OS voices.
+- **Host audio playback** — additionally requires a working audio output
+  device on the machine running the engine (played via pygame-ce).
+
+No special hardware is recommended; the heavy lifting is cloud-side. The
+only hard requirements are Python 3.10+ and — for the default mode — an
+internet connection.
+
 ## User Interface
 
 ### Controls
