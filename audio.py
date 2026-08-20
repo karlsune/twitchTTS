@@ -11,6 +11,7 @@ back to browser-based playback.
 
 from __future__ import annotations
 
+import array
 import io
 import os
 import queue
@@ -27,21 +28,51 @@ MIXER_SIZE = -16
 MIXER_CHANNELS = 1
 
 
+def _apply_fades(pcm: bytes, sample_rate: int, channels: int) -> bytes:
+    """Fade the first/last 5 ms of PCM to silence.
+
+    Decoded MP3 streams often start with a tiny discontinuity (encoder delay
+    / padding) that pygame plays back as an audible click or pop at the
+    start of each message. A 5 ms linear ramp is inaudible on speech but
+    removes the click. Same treatment at the end avoids end-of-message pops.
+    """
+    fade_frames = max(1, int(sample_rate * 0.005))
+    data = array.array("h")
+    data.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    n_frames = len(data) // channels
+    if n_frames == 0:
+        return pcm
+
+    for frame in range(min(fade_frames, n_frames)):
+        gain = frame / fade_frames
+        for c in range(channels):
+            data[frame * channels + c] = int(data[frame * channels + c] * gain)
+
+    for frame in range(max(0, n_frames - fade_frames), n_frames):
+        gain = (n_frames - 1 - frame) / fade_frames
+        for c in range(channels):
+            data[frame * channels + c] = int(data[frame * channels + c] * gain)
+
+    return data.tobytes()
+
+
 def _mp3_to_wav(mp3_bytes: bytes) -> bytes:
     """Decode MP3 bytes and wrap the PCM in a WAV container.
 
     pygame's ``Sound(buffer=...)`` decodes WAV reliably but turns MP3
     buffers into loud static noise, so host audio is converted here first.
+    A short fade-in/out is applied to avoid clicks at playback boundaries.
     """
     decoded = miniaudio.decode(
         mp3_bytes, output_format=miniaudio.SampleFormat.SIGNED16
     )
+    samples = _apply_fades(decoded.samples, decoded.sample_rate, decoded.nchannels)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wav:
         wav.setnchannels(decoded.nchannels)
         wav.setsampwidth(2)
         wav.setframerate(decoded.sample_rate)
-        wav.writeframes(decoded.samples)
+        wav.writeframes(samples)
     return buf.getvalue()
 
 

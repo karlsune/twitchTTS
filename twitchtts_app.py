@@ -312,6 +312,10 @@ class TwitchTTSShell:
         etype = evt.get("type")
         if etype == "log":
             self.log_queue.put(f"[{evt.get('time', '')}] {evt.get('message', '')}")
+        elif etype == "voice":
+            voice = evt.get("voice")
+            if voice:
+                self.root.after(0, lambda v=voice: self._select_voice(v))
         elif etype == "now_playing":
             self.root.after(0, lambda: self.now_label.config(text=f"{evt.get('user', '')}: {evt.get('text', '')}"))
         elif etype == "control":
