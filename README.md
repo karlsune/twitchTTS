@@ -4,7 +4,7 @@ A text-to-speech system that monitors Twitch chat and synthesizes messages into 
 
 ## Overview
 
-Twitch TTS Engine provides real-time voice synthesis for Twitch chat messages. It connects to Twitch IRC anonymously and uses neural text-to-speech to generate natural-sounding audio, which can be integrated directly into streaming workflows via OBS or other broadcast software.
+Twitch TTS Engine provides real-time voice synthesis for Twitch chat messages. It connects to Twitch IRC anonymously and uses neural text-to-speech to generate natural-sounding audio, which can be integrated directly into streaming workflows.
 
 ## Features
 
