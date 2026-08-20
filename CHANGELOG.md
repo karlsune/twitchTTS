@@ -15,6 +15,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Selecting a voice in the tray app now sends the voice ShortName (e.g.
   `en-US-JennyNeural`) instead of the display label, so the change
   actually applies.
+- The frozen `twitchTTS.exe` crashed at startup with
+  `ModuleNotFoundError: pystray`: `build.bat` used the system Python
+  (which lacks pystray/PIL) and PyInstaller silently skipped the missing
+  imports. `build.bat` now prefers `.venv\Scripts\python.exe`, and
+  `--engine` mode no longer imports GUI dependencies at all.
+- The frozen app now resolves `config.json` and `LICENSE` next to the
+  executable (previously it looked inside the onefile temp extraction
+  directory).
 
 ### Changed
 

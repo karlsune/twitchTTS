@@ -117,6 +117,9 @@ python twitchtts_app.py
 - Build a standalone executable: run `build.bat` (produces
   `dist/twitchTTS.exe`). The same binary hosts the engine via a hidden
   `--engine` flag.
+- For the standalone executable, `config.json` is read from (and created
+  next to, on first run) `twitchTTS.exe` — copy your `config.json` next to
+  the binary, e.g. `dist/config.json`.
 
 
 ## Special Users

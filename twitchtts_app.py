@@ -28,11 +28,11 @@ import urllib.request
 import webbrowser
 from tkinter import ttk
 
-import pystray
-from PIL import Image, ImageDraw
-
 VERSION = "0.2.0-dev"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Next to the executable when frozen (PyInstaller), next to this file otherwise.
+BASE_DIR = os.path.dirname(
+    os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__)
+)
 
 COLORS = {
     "ok": (46, 160, 67),
@@ -87,6 +87,8 @@ class TwitchTTSShell:
         threading.Thread(target=self.tray.run, daemon=True).start()
 
     def _tray_image(self, state: str) -> Image.Image:
+        from PIL import Image, ImageDraw
+
         color = COLORS.get(state, COLORS["offline"])
         img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
@@ -424,6 +426,8 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
         return
+    import pystray  # noqa: F401  (GUI deps are not needed in --engine mode)
+
     TwitchTTSShell().run()
 
 
