@@ -59,15 +59,7 @@ Alternatively on Windows, double-click `start_tts.bat`.
 http://localhost:8080/index.html
 ```
 
-You can use this URL directly in a browser or as an OBS browser source.
-
 ## System Requirements
-
-Neural voice synthesis happens on Microsoft's servers, not on the machine
-running the engine: `edge-tts` (the default **Server (Neural)** mode) calls
-Microsoft's Edge TTS cloud service and streams back an MP3. Local
-requirements are therefore minimal.
-
 | Requirement | Minimum |
 |-------------|---------|
 | OS | Windows, Linux, or macOS with Python 3.10+ |
@@ -192,16 +184,6 @@ and `!voice en-US-AriaNeural` both work. Per-user voices are remembered across
 restarts (`user_voices.json` next to `config.json`) and only apply to host-audio
 playback.
 
-## OBS Integration
-
-To integrate Twitch TTS Engine into OBS:
-
-1. Add a new Browser source to your scene
-2. Set the URL to: `http://localhost:8080/index.html`
-3. Configure source dimensions to fit your layout
-4. Enable transparent background if your scene design supports it
-5. Optionally crop the control panel if only chat text should be visible on stream
-
 ## Application Architecture
 
 `app.py` runs the service using one asyncio event loop plus a thread-pool-backed
@@ -278,28 +260,6 @@ While `app.py` runs in a terminal, these keys control host playback:
 |------|--------|
 | `--no-audio` | Force browser-mode playback even when `audio.enabled` is true |
 | `--audio` | Force host-audio playback even when `audio.enabled` is false |
-
-## Roadmap
-
-### Primary — standalone desktop app (Windows, then GNOME/KDE)
-
-Native window + system tray replacing the browser-source workflow:
-
-- Engine (`app.py`) runs unchanged as a local service; a thin native shell
-  (`tkinter`/`ttk` + `pystray`) talks to it over the existing HTTP API.
-- Tray icon shows status color: green (ok), red (error), grey (offline);
-  tray menu: open, mute, about, exit. Minimize hides to tray.
-- Windows is the primary target; GNOME and KDE are secondary.
-- Packaging: PyInstaller (`twitchTTS.exe` / Linux binary).
-- The browser UI stays available as a fallback and remote control.
-
-### Secondary — web UI polish / remote control
-
-### Tertiary — GNU/Unix tool-suite rework
-
-Split the monolith into small composable commands (IRC, sanitize, TTS,
-play) that pipe over text streams, with plain-text config and stderr logs.
-Low priority; the standalone release ships first.
 
 ## Support
 
