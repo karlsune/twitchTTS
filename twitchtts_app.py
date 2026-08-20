@@ -25,7 +25,8 @@ import tkinter as tk
 import urllib.error
 import urllib.parse
 import urllib.request
-from tkinter import messagebox, ttk
+import webbrowser
+from tkinter import ttk
 
 import pystray
 from PIL import Image, ImageDraw
@@ -63,6 +64,7 @@ class TwitchTTSShell:
         self.port = 8080
         self.stream_port = 8081
         self._stop = threading.Event()
+        self._voice_by_label: dict[str, str] = {}
 
         self._build_window()
         self._build_tray()
@@ -294,7 +296,11 @@ class TwitchTTSShell:
         self._post("/api/control", {"action": "skip"})
 
     def _voice_selected(self, _event=None) -> None:
-        self._post("/api/voice", {"voice": self.voice_var.get()})
+        # The combobox shows labels like "en-US-JennyNeural (Female, en-US)";
+        # the engine expects the ShortName.
+        label = self.voice_var.get()
+        voice = self._voice_by_label.get(label, label)
+        self._post("/api/voice", {"voice": voice})
 
     def _volume_drag(self, _value=None) -> None:
         self.volume_label.config(text=f"{int(self.volume_var.get())}%")
@@ -314,14 +320,79 @@ class TwitchTTSShell:
         if names:
             self.root.after(0, lambda: self.voice_box.config(values=names))
 
+    def _load_voices(self) -> None:
+        data = self._api("/api/voices")
+        if not data:
+            return
+        options = []
+        by_label: dict[str, str] = {}
+        for v in data:
+            if not isinstance(v, dict):
+                continue
+            # /api/voices returns {name, gender, locale, label}.
+            name = v.get("name") or v.get("ShortName") or v.get("Name")
+            if not name:
+                continue
+            label = v.get("label") or name
+            by_label[label] = name
+            options.append(label)
+        if not options:
+            return
+        self._voice_by_label = by_label
+        self.root.after(0, lambda: self.voice_box.config(values=options))
+        # Preselect the engine's current voice.
+        cfg = self._api("/api/config")
+        current = (cfg or {}).get("tts_voice")
+        if current:
+            self.root.after(0, lambda c=current: self._select_voice(c))
+
+    def _select_voice(self, name: str) -> None:
+        for label, voice in self._voice_by_label.items():
+            if voice == name:
+                self.voice_var.set(label)
+                return
+        self.voice_var.set(name)
+
+    def _open_license(self) -> None:
+        license_path = os.path.join(BASE_DIR, "LICENSE")
+        opener = getattr(os, "startfile", None)
+        if opener is not None and os.path.isfile(license_path):
+            try:
+                opener(license_path)
+                return
+            except OSError:
+                pass
+        webbrowser.open("https://github.com/karlsune/twitchTTS/blob/main/LICENSE")
+
+    def _open_repo(self) -> None:
+        webbrowser.open("https://github.com/karlsune/twitchTTS")
+
     def about(self, icon=None, item=None) -> None:
-        messagebox.showinfo(
-            "About Twitch TTS Engine",
-            f"Twitch TTS Engine {VERSION}\n\n"
-            "Real-time TTS for Twitch chat.\n"
-            "https://github.com/karlsune/twitchTTS",
-            parent=self.root,
-        )
+        win = tk.Toplevel(self.root)
+        win.title("About Twitch TTS Engine")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+
+        frame = ttk.Frame(win, padding=16)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="Twitch TTS Engine", font=("Segoe UI", 13, "bold")).pack()
+        ttk.Label(
+            frame,
+            text=(
+                f"Version {VERSION}\n\n"
+                "Real-time text-to-speech for Twitch chat.\n\n"
+                "Licensed under the MIT License."
+            ),
+            justify="center",
+        ).pack(pady=(4, 10))
+
+        btns = ttk.Frame(frame)
+        btns.pack()
+        ttk.Button(btns, text="View MIT License", command=self._open_license).pack(side="left", padx=4)
+        ttk.Button(btns, text="Repository", command=self._open_repo).pack(side="left", padx=4)
+        ttk.Button(btns, text="Close", command=win.destroy).pack(side="left", padx=4)
 
     def exit_app(self, icon=None, item=None) -> None:
         self._stop.set()

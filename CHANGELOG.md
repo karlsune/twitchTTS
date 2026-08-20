@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Tray app voice dropdown was always empty: it parsed the `/api/voices`
+  response using the keys `ShortName`/`Name`, but the API returns
+  `name`/`label`. The dropdown now lists every voice and preselects the
+  engine's current voice from `/api/config`.
+- Selecting a voice in the tray app now sends the voice ShortName (e.g.
+  `en-US-JennyNeural`) instead of the display label, so the change
+  actually applies.
+
+### Changed
+
+- About dialog now states the MIT license and offers a "View MIT License"
+  button (opens the local `LICENSE` file) plus a repository link.
+
 ### Added
 
 - Standalone tray shell (`twitchtts_app.py`): native window + system tray
