@@ -15,7 +15,6 @@ import asyncio
 import concurrent.futures
 import http.server
 import json
-import shutil
 import queue
 import socketserver
 import sys
@@ -28,6 +27,7 @@ from pathlib import Path
 
 import edge_tts
 
+from config import get_config_path, load_config, save_config
 from emotes import fetch_emote_names
 from sanitize import sanitize_chat_text
 
@@ -52,7 +52,6 @@ if getattr(sys, "frozen", False):
 else:
     BASE_DIR = Path(__file__).resolve().parent
     BUNDLE_DIR = BASE_DIR
-CONFIG_PATH = BASE_DIR / "config.json"
 
 # Lightweight runtime status for the standalone shell's tray icon.
 ENGINE_STATUS = {
@@ -79,28 +78,6 @@ audio_enabled = False
 audio_state = {"muted": False, "volume": 0.8}
 last_speak_time: dict[str, float] = {}
 last_speak_lock = threading.Lock()
-
-
-def load_config() -> dict:
-    """Load the JSON configuration located beside the application file.
-
-    On first run, ``config.json`` is created from ``config.example.json``
-    so that a fresh checkout works without manual setup.
-    """
-    if not CONFIG_PATH.exists():
-        example_path = CONFIG_PATH.with_name("config.example.json")
-        if not example_path.exists():
-            bundled = BUNDLE_DIR / "config.example.json"
-            if bundled.exists():
-                example_path = bundled
-        if not example_path.exists():
-            raise FileNotFoundError(
-                f"Neither {CONFIG_PATH.name} nor {example_path.name} was found. "
-                "Copy config.example.json to config.json and edit it."
-            )
-        shutil.copyfile(example_path, CONFIG_PATH)
-    with CONFIG_PATH.open(encoding="utf-8-sig") as config_file:
-        return json.load(config_file)
 
 
 CONFIG = load_config()
@@ -736,10 +713,10 @@ def start_http_server() -> None:
             super().do_GET()
 
         def do_POST(self):
-            """Handle host-audio control endpoints (voice, mute, volume, skip)."""
+            """Handle host-audio control endpoints (voice, mute, volume, skip, config)."""
             parsed = urllib.parse.urlparse(self.path)
             if (
-                parsed.path in ("/api/voice", "/api/control")
+                parsed.path in ("/api/voice", "/api/control", "/api/config")
                 and self._reject_cross_origin()
             ):
                 return
@@ -748,6 +725,9 @@ def start_http_server() -> None:
                 return
             if parsed.path == "/api/control":
                 self._handle_control_request()
+                return
+            if parsed.path == "/api/config":
+                self._handle_config_save()
                 return
             self.send_error(404, "Not found")
 
@@ -802,6 +782,63 @@ def start_http_server() -> None:
                     main_loop,
                 )
             self._send_json({"voice": server_voice})
+
+        def _handle_config_save(self):
+            """Persist configuration and apply the runtime-only parts immediately."""
+            global server_voice
+            body = self._read_json_body()
+            if not isinstance(body, dict):
+                self.send_error(400, "Invalid config payload")
+                return
+
+            merged = dict(CONFIG)
+            merged.update(body)
+
+            # Coerce known numeric fields so a bad value can't wedge the app.
+            for key in ("http_port", "stream_port", "cooldown_seconds", "max_chars"):
+                if key in merged:
+                    try:
+                        merged[key] = int(merged[key])
+                    except (TypeError, ValueError):
+                        self.send_error(400, f"Invalid value for {key}")
+                        return
+
+            audio = merged.get("audio")
+            if isinstance(audio, dict):
+                for key in ("volume", "queue_size"):
+                    if key in audio:
+                        try:
+                            audio[key] = float(audio[key]) if key == "volume" else int(audio[key])
+                        except (TypeError, ValueError):
+                            self.send_error(400, f"Invalid value for audio.{key}")
+                            return
+
+            try:
+                save_config(merged)
+            except OSError as exc:
+                app_log(f"Could not save config: {exc}", level="error")
+                self.send_error(500, "Could not save config")
+                return
+
+            # Settings that can apply without a restart.
+            if isinstance(merged.get("tts_voice"), str) and merged["tts_voice"].strip():
+                server_voice = merged["tts_voice"].strip()
+                app_log(f"Voice set to {server_voice} (from saved config)")
+                if main_loop and main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast(json.dumps({"type": "voice", "voice": server_voice})),
+                        main_loop,
+                    )
+            if isinstance(audio, dict):
+                if "muted" in audio:
+                    set_muted(bool(audio["muted"]))
+                if "volume" in audio:
+                    audio_state["volume"] = max(0.0, min(1.0, float(audio["volume"])))
+                    if audio_player is not None:
+                        audio_player.set_volume(audio_state["volume"])
+
+            app_log(f"Configuration saved to {get_config_path()}")
+            self._send_json(merged)
 
         def _handle_control_request(self):
             """Apply mute/volume/skip controls to host audio."""

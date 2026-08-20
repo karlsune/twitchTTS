@@ -28,6 +28,8 @@ import urllib.request
 import webbrowser
 from tkinter import ttk
 
+from config import get_config_path
+
 VERSION = "0.2.0-dev"
 # Next to the executable when frozen (PyInstaller), next to this file otherwise.
 BASE_DIR = os.path.dirname(
@@ -119,6 +121,7 @@ class TwitchTTSShell:
         self.mute_btn = ttk.Button(controls, text="Mute", command=self.toggle_mute, width=8)
         self.mute_btn.pack(side="left", padx=(0, 6))
         ttk.Button(controls, text="Skip", command=self.skip, width=8).pack(side="left", padx=(0, 12))
+        ttk.Button(controls, text="Options...", command=self._open_options, width=10).pack(side="left", padx=(0, 12))
 
         ttk.Label(controls, text="Voice:").pack(side="left")
         self.voice_var = tk.StringVar()
@@ -355,6 +358,145 @@ class TwitchTTSShell:
                 return
         self.voice_var.set(name)
 
+    def _restart_engine(self) -> None:
+        """Stop the engine subprocess and start it again (picks up config)."""
+        if self.engine is not None and self.engine.poll() is None:
+            self.engine.terminate()
+            try:
+                self.engine.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.engine.kill()
+        self._log("Restarting engine...")
+        self._start_engine()
+
+    def _open_options(self) -> None:
+        """Options window: edit config.json from the GUI instead of by hand."""
+        cfg = self._api("/api/config") or {}
+        voices = self._api("/api/voices") or []
+
+        win = tk.Toplevel(self.root)
+        win.title("Twitch TTS Options")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+
+        frame = ttk.Frame(win, padding=12)
+        frame.pack(fill="both", expand=True)
+
+        rows = []
+
+        def add_row(label: str, widget: tk.Widget) -> None:
+            rows.append((label, widget))
+
+        channel_var = tk.StringVar(value=cfg.get("twitch_channel", ""))
+        add_row("Twitch channel", ttk.Entry(frame, textvariable=channel_var, width=28))
+
+        voice_var = tk.StringVar(value=cfg.get("tts_voice", ""))
+        voice_box = ttk.Combobox(frame, textvariable=voice_var, state="readonly", width=28)
+        by_label: dict[str, str] = {}
+        voice_options = []
+        for v in voices:
+            if not isinstance(v, dict):
+                continue
+            name = v.get("name") or v.get("ShortName")
+            if not name:
+                continue
+            label = v.get("label") or name
+            by_label[label] = name
+            voice_options.append(label)
+        voice_box.config(values=voice_options)
+        for label, name in by_label.items():
+            if name == voice_var.get():
+                voice_var.set(label)
+        add_row("Neural voice", voice_box)
+
+        prefix_var = tk.StringVar(value=cfg.get("command_prefix", "!tts"))
+        add_row("Command prefix", ttk.Entry(frame, textvariable=prefix_var, width=28))
+
+        cooldown_var = tk.StringVar(value=str(cfg.get("cooldown_seconds", 3)))
+        add_row("Cooldown (seconds)", ttk.Spinbox(frame, from_=0, to=120, textvariable=cooldown_var, width=8))
+
+        maxchars_var = tk.StringVar(value=str(cfg.get("max_chars", 200)))
+        add_row("Max message length", ttk.Spinbox(frame, from_=10, to=500, textvariable=maxchars_var, width=8))
+
+        special_var = tk.StringVar(value=", ".join(cfg.get("special_users", [])))
+        add_row("Special users (comma separated)", ttk.Entry(frame, textvariable=special_var, width=28))
+
+        audio = cfg.get("audio") if isinstance(cfg.get("audio"), dict) else {}
+        volume_var = tk.DoubleVar(value=float(audio.get("volume", 0.8)) * 100)
+        volume_scale = ttk.Scale(frame, from_=0, to=100, variable=volume_var, length=200)
+        add_row("Audio volume", volume_scale)
+
+        muted_var = tk.BooleanVar(value=bool(audio.get("muted", False)))
+        add_row("Muted by default", ttk.Checkbutton(frame, variable=muted_var))
+
+        queue_var = tk.StringVar(value=str(audio.get("queue_size", 50)))
+        add_row("Audio queue size", ttk.Spinbox(frame, from_=1, to=500, textvariable=queue_var, width=8))
+
+        for i, (label, widget) in enumerate(rows):
+            ttk.Label(frame, text=label).grid(row=i, column=0, sticky="w", padx=(0, 8), pady=3)
+            widget.grid(row=i, column=1, sticky="w", pady=3)
+
+        ttk.Label(
+            frame,
+            text="Channel, prefix and ports apply after restart.",
+            foreground="#666666",
+        ).grid(row=len(rows), column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(
+            frame,
+            text=f"Config file: {get_config_path()}",
+            foreground="#888888",
+        ).grid(row=len(rows) + 1, column=0, columnspan=2, sticky="w", pady=(0, 6))
+
+        def collect() -> dict:
+            special = [u.strip() for u in special_var.get().split(",") if u.strip()]
+            return {
+                "twitch_channel": channel_var.get().strip(),
+                "tts_voice": by_label.get(voice_var.get(), voice_var.get()),
+                "command_prefix": prefix_var.get().strip() or "!tts",
+                "cooldown_seconds": int(cooldown_var.get() or 0),
+                "max_chars": int(maxchars_var.get() or 200),
+                "special_users": special,
+                "audio": {
+                    "volume": max(0.0, min(1.0, volume_var.get() / 100.0)),
+                    "muted": muted_var.get(),
+                    "queue_size": int(queue_var.get() or 50),
+                },
+            }
+
+        def save() -> bool:
+            payload = collect()
+            data = json.dumps(payload).encode("utf-8")
+            try:
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{self.port}/api/config",
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=6.0) as resp:
+                    resp.read()
+            except (OSError, urllib.error.URLError) as exc:
+                self._log(f"Could not save options: {exc}")
+                return False
+            self._log("Options saved.")
+            return True
+
+        def on_save() -> None:
+            if save():
+                win.destroy()
+
+        def on_save_restart() -> None:
+            if save():
+                win.destroy()
+                self._restart_engine()
+
+        btns = ttk.Frame(frame)
+        btns.grid(row=len(rows) + 2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(btns, text="Save", command=on_save).pack(side="left", padx=(0, 6))
+        ttk.Button(btns, text="Save & Restart", command=on_save_restart).pack(side="left", padx=(0, 6))
+        ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left")
+
     def _open_license(self) -> None:
         license_path = os.path.join(BASE_DIR, "LICENSE")
         opener = getattr(os, "startfile", None)
@@ -365,6 +507,17 @@ class TwitchTTSShell:
             except OSError:
                 pass
         webbrowser.open("https://github.com/karlsune/twitchTTS/blob/main/LICENSE")
+
+    def _open_notices(self) -> None:
+        notices_path = os.path.join(BASE_DIR, "THIRD-PARTY-NOTICES.md")
+        opener = getattr(os, "startfile", None)
+        if opener is not None and os.path.isfile(notices_path):
+            try:
+                opener(notices_path)
+                return
+            except OSError:
+                pass
+        webbrowser.open("https://github.com/karlsune/twitchTTS/blob/main/THIRD-PARTY-NOTICES.md")
 
     def _open_repo(self) -> None:
         webbrowser.open("https://github.com/karlsune/twitchTTS")
@@ -385,7 +538,8 @@ class TwitchTTSShell:
             text=(
                 f"Version {VERSION}\n\n"
                 "Real-time text-to-speech for Twitch chat.\n\n"
-                "Licensed under the MIT License."
+                "Licensed under the MIT License.\n"
+                f"Config: {get_config_path()}"
             ),
             justify="center",
         ).pack(pady=(4, 10))
@@ -393,6 +547,7 @@ class TwitchTTSShell:
         btns = ttk.Frame(frame)
         btns.pack()
         ttk.Button(btns, text="View MIT License", command=self._open_license).pack(side="left", padx=4)
+        ttk.Button(btns, text="Third-Party Notices", command=self._open_notices).pack(side="left", padx=4)
         ttk.Button(btns, text="Repository", command=self._open_repo).pack(side="left", padx=4)
         ttk.Button(btns, text="Close", command=win.destroy).pack(side="left", padx=4)
 

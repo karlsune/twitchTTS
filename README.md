@@ -79,7 +79,11 @@ You can use this URL directly in a browser or as an OBS browser source.
 
 ## Configuration
 
-Configuration is managed via `config.json` in the application root directory.
+Configuration is managed via `config.json` — next to the sources when
+running from a checkout, in `%APPDATA%\TwitchTTS\config.json` for the
+standalone exe. It is created automatically from `config.example.json` on
+first run, and can be edited with the **Options...** button in the app
+window instead of by hand.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -114,12 +118,18 @@ python twitchtts_app.py
 - Tray icon shows engine state: green (ok), red (error), grey (offline).
 - Tray menu: Open, Mute, About, Exit. Closing the window minimizes to tray
   while the engine keeps running.
+- **Options...** button in the app window edits the configuration from the
+  GUI (channel, voice, prefix, cooldown, special users, audio) instead of
+  hand-editing JSON. "Save & Restart" applies channel/prefix/port changes
+  immediately.
 - Build a standalone executable: run `build.bat` (produces
   `dist/twitchTTS.exe`). The same binary hosts the engine via a hidden
   `--engine` flag.
-- For the standalone executable, `config.json` is read from (and created
-  next to, on first run) `twitchTTS.exe` — copy your `config.json` next to
-  the binary, e.g. `dist/config.json`.
+- The standalone executable stores its configuration in the per-user app
+  data folder (`%APPDATA%\TwitchTTS\config.json`) and creates it from the
+  bundled example on first run — you can drop the exe anywhere (desktop,
+  USB stick) without JSON files appearing next to it. When running from a
+  source checkout, `config.json` stays next to the sources.
 
 
 ## Special Users

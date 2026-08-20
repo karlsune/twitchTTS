@@ -14,6 +14,7 @@ if exist ".venv\Scripts\python.exe" (
   --add-data "styles.css;." ^
   --add-data "config.example.json;." ^
   --add-data "LICENSE;." ^
+  --add-data "THIRD-PARTY-NOTICES.md;." ^
   --hidden-import pystray._win32 ^
   twitchtts_app.py
 echo.

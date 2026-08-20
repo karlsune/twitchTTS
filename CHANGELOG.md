@@ -28,6 +28,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - About dialog now states the MIT license and offers a "View MIT License"
   button (opens the local `LICENSE` file) plus a repository link.
+- New **Options...** window in the tray app: edit channel, voice, command
+  prefix, cooldown, max length, special users and audio settings from the
+  GUI. "Save & Restart" applies channel/prefix/port changes immediately.
+- The standalone exe now stores `config.json` in `%APPDATA%\TwitchTTS`
+  (per-user app data, Windows convention) instead of next to the binary,
+  so no JSON files appear where the exe is placed. Existing configs next
+  to the exe are migrated automatically on first run.
+- Added `THIRD-PARTY-NOTICES.md` (LGPL notices for edge-tts and pygame-ce
+  plus MIT texts) and linked it from the About dialog; project stays MIT
+  while remaining compliant with its LGPL dependencies.
 
 ### Added
 
