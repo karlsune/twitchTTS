@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `require_prefix` option: disable the `!tts` prefix requirement entirely.
+  New checkbox in Options (prefix field locks when disabled); default on.
+- Linux package: `install_linux.sh` (headless systemd user service),
+  `requirements-linux.txt`, XDG config dir for frozen builds, README
+  section for servers (audio plays in the browser UI).
+
 ### Fixed
 
 - Loud click/pop at the start of every host-audio message: pygame's mixer
