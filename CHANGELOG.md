@@ -13,6 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Linux package: `install_linux.sh` (headless systemd user service),
   `requirements-linux.txt`, XDG config dir for frozen builds, README
   section for servers (audio plays in the browser UI).
+- Linux GUI: the full tray app runs on desktop Linux (python3-tk + X
+  display); System (SAPI) mode is gated to Windows in both the engine and
+  the tray's engine selector.
 
 ### Fixed
 
