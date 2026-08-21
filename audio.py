@@ -16,6 +16,7 @@ import io
 import os
 import queue
 import threading
+import time
 import wave
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
