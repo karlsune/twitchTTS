@@ -48,8 +48,11 @@ COLORS = {
 
 
 def _read_config() -> dict:
+    # Resolve via config.py: repo dir for source runs, %APPDATA%\TwitchTTS
+    # for the frozen exe. Reading next to the exe silently ignored the
+    # persisted settings on frozen builds (config lives in app data).
     try:
-        with open(os.path.join(BASE_DIR, "config.json"), encoding="utf-8-sig") as f:
+        with open(get_config_path(), encoding="utf-8-sig") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {}
