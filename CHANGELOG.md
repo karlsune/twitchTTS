@@ -4,27 +4,24 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-08-21
 
 ### Added
 
-- **System TTS engine mode** (`tts_mode: "system"`): fully offline speech via
-  Windows SAPI voices (no internet, no API). Switchable live from the new
-  **Engine** selector in the main window; the voice list follows the active
-  mode. Config key `tts_mode` (default `edge`).
+- Single-instance guard: launching a second copy focuses the running window
+  instead of crashing on a port conflict.
+- System TTS engine mode (`tts_mode: "system"`): fully offline speech via
+  Windows SAPI voices, switchable live via the Engine selector.
+
+### Fixed
+
+- Garbled Unicode in the tray window (Now Playing placeholder, status dots)
+  caused by double-encoded characters.
 
 ### Changed
 
-- Main window is now the control center: engine selector, voice list,
-  About button (bottom-left) and Options button (bottom-right).
-- Options window states clearly that all changes apply after restart
-  ("Save & Restart" applies them immediately).
-- The shell listens for the engine's `voice` SSE event, so changing the
-  voice in Options updates the main window immediately without a restart.
-- Host audio applies a 5 ms fade-in/out per message, removing the audible
-  click caused by MP3 encoder delay at the start of playback.
-- README rewritten: desktop app is the documented interface; the browser
-  UI is marked obsolete (still bundled for compatibility).
+- Docs rework: README rewritten; `LICENSE` → `LICENSE.md`;
+  `THIRD-PARTY-NOTICES.md` → `THIRD-PARTY-SOFTWARE.md`.
 
 ## [0.2.0] - 2026-08-20
 

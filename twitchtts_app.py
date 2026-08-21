@@ -31,7 +31,7 @@ from tkinter import messagebox, ttk
 
 from config import get_config_path
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 MODE_LABELS = {"Neural (edge-tts)": "edge", "System (offline)": "system"}
 MODE_KEYS = {key: label for label, key in MODE_LABELS.items()}
@@ -588,7 +588,7 @@ class TwitchTTSShell:
         ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left")
 
     def _open_license(self) -> None:
-        license_path = os.path.join(BASE_DIR, "LICENSE")
+        license_path = os.path.join(BASE_DIR, "LICENSE.md")
         opener = getattr(os, "startfile", None)
         if opener is not None and os.path.isfile(license_path):
             try:
@@ -596,10 +596,10 @@ class TwitchTTSShell:
                 return
             except OSError:
                 pass
-        webbrowser.open("https://github.com/karlsune/twitchTTS/blob/main/LICENSE")
+        webbrowser.open("https://github.com/karlsune/twitchTTS/blob/main/LICENSE.md")
 
     def _open_notices(self) -> None:
-        notices_path = os.path.join(BASE_DIR, "THIRD-PARTY-NOTICES.md")
+        notices_path = os.path.join(BASE_DIR, "THIRD-PARTY-SOFTWARE.md")
         opener = getattr(os, "startfile", None)
         if opener is not None and os.path.isfile(notices_path):
             try:
@@ -607,7 +607,7 @@ class TwitchTTSShell:
                 return
             except OSError:
                 pass
-        webbrowser.open("https://github.com/karlsune/twitchTTS/blob/main/THIRD-PARTY-NOTICES.md")
+        webbrowser.open("https://github.com/karlsune/twitchTTS/blob/main/THIRD-PARTY-SOFTWARE.md")
 
     def _open_repo(self) -> None:
         webbrowser.open("https://github.com/karlsune/twitchTTS")
@@ -658,6 +658,57 @@ class TwitchTTSShell:
         self.root.mainloop()
 
 
+_SINGLE_INSTANCE_MUTEX = None
+
+
+def _claim_single_instance() -> bool:
+    """Claim a process-wide mutex; focus the existing window if one is open.
+
+    Returns True when this process may keep running, False when another
+    instance is already active (its window was brought to the front and
+    this process should exit). Enforced on Windows only; the guard must
+    not affect ``--engine`` subprocesses, so it is only called from the
+    tray-shell path in ``main()``.
+    """
+    global _SINGLE_INSTANCE_MUTEX
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CreateMutexW.argtypes = [
+            wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR,
+        ]
+        kernel32.GetLastError.restype = wintypes.DWORD
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+
+        handle = kernel32.CreateMutexW(None, False, "Local\\TwitchTTS.SingleInstance")
+        if not handle:
+            return True
+        if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            kernel32.CloseHandle(handle)
+            # Bring the running instance's window to the front.
+            hwnd = user32.FindWindowW(None, "Twitch TTS Engine")
+            if hwnd:
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE (also un-hides)
+                user32.SetForegroundWindow(hwnd)
+            return False
+        # Keep the handle for the process lifetime; closing it would
+        # release the mutex and allow a second instance.
+        _SINGLE_INSTANCE_MUTEX = handle
+        return True
+    except Exception:
+        # Never block startup on a guard failure.
+        return True
+
+
 def main() -> None:
     if "--engine" in sys.argv:
         # Strip our flag before importing app: its argparse runs at import
@@ -672,6 +723,8 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
         return
+    if not _claim_single_instance():
+        sys.exit(0)
     TwitchTTSShell().run()
 
 

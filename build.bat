@@ -13,8 +13,8 @@ if exist ".venv\Scripts\python.exe" (
   --add-data "index.html;." ^
   --add-data "styles.css;." ^
   --add-data "config.example.json;." ^
-  --add-data "LICENSE;." ^
-  --add-data "THIRD-PARTY-NOTICES.md;." ^
+  --add-data "LICENSE.md;." ^
+  --add-data "THIRD-PARTY-SOFTWARE.md;." ^
   --hidden-import cffi ^
   --hidden-import _cffi_backend ^
   --hidden-import pystray._win32 ^
