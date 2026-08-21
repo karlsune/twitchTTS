@@ -25,6 +25,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (focus-stealing on stream). Child processes now use
   `CREATE_NO_WINDOW`.
 
+### Changed
+
+- `!voice` command feedback is log-only: confirmations no longer produce
+  audio (previously every `!voice` reply was spoken aloud).
+
 ## [0.2.1] - 2026-08-21
 
 ### Added
