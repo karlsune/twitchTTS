@@ -14,12 +14,12 @@ monitoring.
 - **Two TTS engines** — cloud neural voices via [edge-tts](https://github.com/rany2/edge-tts)
   (default, needs internet) or fully offline Windows SAPI voices; switch live
   in the app
-- **Tray app** — control window with mute/skip, voice + engine selector,
-  volume, now-playing, live log, and an Options window for configuration
+- **Windows app** — control panel with mute/skip, voice + engine selector,
+  volume, now-playing, live log, and an Options page for configuration
+- **Minimizable** to tray!
 - **Viewer voice command** — `!voice <name>` lets viewers pick their own
   voice, remembered per user across restarts
-- **Host audio playback** — bounded queue, skip, live volume/mute, click-free
-  fade in/out (pygame-ce)
+- **Host audio playback** — bounded queue, skip, live volume/mute
 - **Content sanitization** — strips Twitch/BTTV/FFZ/7TV emotes, emojis, and
   URLs before synthesis
 - **Config-driven rules** — command prefix, special users, per-user cooldown,
@@ -32,8 +32,7 @@ monitoring.
 
 Download `twitchTTS.exe` from the [latest release](https://github.com/karlsune/twitchTTS/releases)
 and run it. First launch creates `config.json` in `%APPDATA%\TwitchTTS`;
-open the window and use **Options...** to set your channel. No installers,
-no JSON files next to the exe.
+open the window and use **Options...** to set your channel.
 
 ### From source
 
@@ -66,8 +65,18 @@ your channel in `config.json` (auto-created from `config.example.json`):
 | **About** | Version, license, third-party software |
 | **Options...** | Edit config from the GUI ("Save & Restart" applies immediately) |
 
-The tray icon reflects engine state: green ok / red error / grey offline,
-with a red slash while muted.
+## Tray Icon
+
+ - **Left click** maximizes program
+ - **Right click** small curtain menu
+ - Tray icon changes color to represent different states of operation.
+
+| Icon | Meaning |
+|-----|----------|
+| 🟢 | Engine is OK (normal operation) |
+| 🔴 | Engine error |
+| ⚪ | Engine is offline |
+| 🔇 |	Muted active |
 
 ## Configuration
 
