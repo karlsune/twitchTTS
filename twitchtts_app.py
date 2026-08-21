@@ -108,9 +108,9 @@ class TwitchTTSShell:
         return img
 
     def _refresh_tray(self) -> None:
-        suffix = " â€” muted" if self.muted else ""
+        suffix = " — muted" if self.muted else ""
         self.tray.icon = self._tray_image(self.state, self.muted)
-        self.tray.title = f"Twitch TTS Engine â€” {self.state}{suffix}"
+        self.tray.title = f"Twitch TTS Engine — {self.state}{suffix}"
         self.tray.update_menu()
 
     def _set_state(self, state: str) -> None:
@@ -164,7 +164,7 @@ class TwitchTTSShell:
         now = ttk.Frame(left)
         now.pack(fill="x")
         ttk.Label(now, text="Now Playing", font=("Segoe UI", 10, "bold")).pack(anchor="w")
-        self.now_label = ttk.Label(now, text="â€”", wraplength=440, justify="left")
+        self.now_label = ttk.Label(now, text="—", wraplength=440, justify="left")
         self.now_label.pack(anchor="w", pady=(2, 0))
         self.queue_label = ttk.Label(now, text="", foreground="#666666")
         self.queue_label.pack(anchor="w")
@@ -290,19 +290,19 @@ class TwitchTTSShell:
         while not self._stop.is_set():
             if self.engine is not None and self.engine.poll() is not None:
                 self._set_state("offline")
-                self.root.after(0, lambda: self.status_label.config(text="â— offline", foreground="#8c8c8c"))
+                self.root.after(0, lambda: self.status_label.config(text="● offline", foreground="#8c8c8c"))
             else:
                 status = self._api("/api/status")
                 if status is None:
                     self._set_state("offline")
-                    self.root.after(0, lambda: self.status_label.config(text="â— offline", foreground="#8c8c8c"))
+                    self.root.after(0, lambda: self.status_label.config(text="● offline", foreground="#8c8c8c"))
                 else:
                     state = status.get("status", "error")
                     self._set_state(state)
                     text = {
-                        "ok": "â— engine running",
-                        "error": "â— error â€” check log",
-                    }.get(state, "â— offline")
+                        "ok": "● engine running",
+                        "error": "● error — check log",
+                    }.get(state, "● offline")
                     color = {"ok": "#2ea043", "error": "#c83232"}.get(state, "#8c8c8c")
                     self.root.after(0, lambda t=text, c=color: self.status_label.config(text=t, foreground=c))
             self._stop.wait(2.0)
