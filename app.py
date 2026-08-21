@@ -1215,8 +1215,7 @@ async def main() -> None:
     if audio_requested:
         if not AUDIO_IMPORT_OK:
             app_log(
-                f"Host audio disabled (pygame/miniaudio import failed: "
-                f"{AUDIO_IMPORT_ERROR}) - browser mode active",
+                f"Host audio disabled: {AUDIO_IMPORT_ERROR} - browser mode active",
                 level="warn",
             )
         else:

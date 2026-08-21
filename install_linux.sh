@@ -8,6 +8,19 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${TWITCHTTS_VENV:-$HOME/.local/share/twitchtts/venv}"
 
+# python3-venv is a hard prereq on Debian/Ubuntu (ensurepip lives there).
+if command -v apt-get >/dev/null 2>&1 && ! python3 -c "import ensurepip" 2>/dev/null; then
+    echo "==> Installing python3-venv (required to create the virtualenv)"
+    sudo apt-get install -y python3-venv >/dev/null 2>&1 || {
+        echo "    Install it manually: sudo apt-get install python3-venv"
+        exit 1
+    }
+fi
+
+# systemctl --user needs these in non-login SSH shells (headless installs).
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+
 echo "==> Creating virtualenv at $VENV_DIR"
 python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null
@@ -52,5 +65,6 @@ EOF
     systemctl --user enable --now "$SERVICE_NAME"
     echo "==> Headless service installed. Config: $REPO_DIR/config.json"
     echo "    Edit it, then: systemctl --user restart $SERVICE_NAME"
+    echo "    Keep it running after logout: loginctl enable-linger \$(id -u)"
     systemctl --user status "$SERVICE_NAME" --no-pager | head -n 8
 fi
