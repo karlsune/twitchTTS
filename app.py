@@ -415,6 +415,13 @@ def generate_tts_audio_sync(text: str, voice: str) -> bytes:
     return asyncio.run(generate_tts_audio(text, voice))
 
 
+def _no_window_flags() -> int:
+    """Hide the console of child processes (frozen windowed exe)."""
+    if os.name == "nt":
+        return subprocess.CREATE_NO_WINDOW
+    return 0
+
+
 def list_system_voices() -> list[dict]:
     """Enumerate Windows SAPI voices via PowerShell (cached). Offline mode."""
     global system_voices_cache
@@ -435,6 +442,7 @@ def list_system_voices() -> list[dict]:
             capture_output=True,
             text=True,
             timeout=20,
+            creationflags=_no_window_flags(),
         ).stdout.strip()
         voices = json.loads(out) if out else []
         if isinstance(voices, dict):
@@ -480,6 +488,7 @@ def generate_system_tts(text: str, voice: str) -> bytes:
         capture_output=True,
         text=True,
         timeout=60,
+        creationflags=_no_window_flags(),
     )
     if proc.returncode != 0 or not proc.stdout.strip():
         raise RuntimeError(proc.stderr.strip() or "System TTS synthesis failed")

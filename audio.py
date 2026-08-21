@@ -27,6 +27,14 @@ MIXER_FREQUENCY = 44100
 MIXER_SIZE = -16
 MIXER_CHANNELS = 1
 
+# pygame's mixer emits a short noise burst (~40-50 ms, near full scale)
+# whenever a Channel starts playing, regardless of the buffer contents
+# (measured: an all-silence WAV still "plays" a 0.7-amplitude burst at
+# start). The channel is kept at volume 0 for this window and then faded
+# in, so the burst never reaches the speakers. TTS clips start with
+# 200-400 ms of leading silence, so the guard cuts nothing audible.
+BURST_GUARD_MS = 80
+
 
 def _apply_fades(pcm: bytes, sample_rate: int, channels: int) -> bytes:
     """Fade the first/last 5 ms of PCM to silence.
@@ -187,6 +195,9 @@ class AudioPlayer:
             self._current_channel = sound.play()
 
             if self._current_channel is not None:
+                # Swallow pygame's start-of-playback noise burst.
+                self._current_channel.set_volume(0.0)
+                threading.Thread(target=self._ramp_channel, daemon=True).start()
                 while self._current_channel.get_busy():
                     if self._stop_event.wait(0.05):
                         self._current_channel.stop()
@@ -194,6 +205,15 @@ class AudioPlayer:
 
             self._current_sound = None
             self._current_channel = None
+
+    def _ramp_channel(self) -> None:
+        """Restore the channel volume after the burst-guard window."""
+        time.sleep(BURST_GUARD_MS / 1000.0)
+        try:
+            if self._current_channel is not None:
+                self._current_channel.set_volume(1.0)
+        except pygame.error:
+            pass
 
 
 def init_player(
