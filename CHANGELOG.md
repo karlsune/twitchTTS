@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Loud click/pop at the start of every host-audio message: pygame's mixer
+  emits a ~50 ms noise burst when a channel starts playing, even for
+  silent buffers. The channel is now held muted for the first 80 ms and
+  faded in, so the burst never reaches the speakers (verified via WASAPI
+  loopback capture: burst gone, audio intact).
+- System TTS mode flashed a PowerShell console window on every synthesis
+  (focus-stealing on stream). Child processes now use
+  `CREATE_NO_WINDOW`.
+
 ## [0.2.1] - 2026-08-21
 
 ### Added
