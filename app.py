@@ -180,30 +180,36 @@ def resolve_voice(user: str) -> str:
 
 
 def handle_voice_command(user: str, arg: str) -> None:
-    """Process a viewer's ``!voice`` command (host-audio mode only)."""
+    """Process a viewer's ``!voice`` command (host-audio mode only).
+
+    Feedback is log-only: command confirmations never produce audio.
+    """
     if not audio_enabled:
         return
     key = user.lower()
     if not arg or arg.lower() in ("status", "?"):
         current = user_voices.get(key) or DEFAULT_TTS_VOICE
-        enqueue_speech(user, f"Your voice is {current}")
+        app_log(f"Voice for {user}: {current}")
         return
     if arg.lower() in ("reset", "default", "off"):
         with user_voices_lock:
             had = user_voices.pop(key, None)
             if had is not None:
                 save_user_voices()
-        enqueue_speech(user, "Your voice override was removed" if had else "You had no voice override")
+        app_log(
+            f"Voice override for {user} removed"
+            if had
+            else f"No voice override for {user}"
+        )
         return
     canonical = canonical_voice(arg)
     if canonical is None:
-        enqueue_speech(user, f"Unknown voice {arg}. Try one from the voice list in the app options.")
+        app_log(f"Unknown voice {arg} from {user}")
         return
     with user_voices_lock:
         user_voices[key] = canonical
         save_user_voices()
     app_log(f"Voice for {user} set to {canonical}")
-    enqueue_speech(user, f"Your voice is now {canonical}")
 
 
 def app_log(message: str, level: str = "info") -> None:
