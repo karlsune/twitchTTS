@@ -92,6 +92,7 @@ HTTP_PORT = CONFIG["http_port"]
 STREAM_PORT = CONFIG["stream_port"]
 DEFAULT_TTS_VOICE = CONFIG.get("tts_voice", "en-US-JennyNeural")
 COMMAND_PREFIX = CONFIG.get("command_prefix", "!tts")
+REQUIRE_PREFIX = bool(CONFIG.get("require_prefix", True))
 SPECIAL_USERS = {user.lower() for user in CONFIG.get("special_users", [])}
 COOLDOWN_SECONDS = float(CONFIG.get("cooldown_seconds", 0))
 MAX_CHARS = int(CONFIG.get("max_chars", 200))
@@ -729,13 +730,14 @@ async def _listen_to_twitch_chat() -> None:
 
         # Ignore empty or overly long messages.
         # Special users can speak without the command prefix; everyone else
-        # must start messages with the configured prefix (default "!tts").
+        # must start messages with the configured prefix (default "!tts")
+        # unless prefix requirement is disabled (require_prefix=false).
         is_special_user = user.lower() in SPECIAL_USERS
         if is_special_user:
             if not text or len(text) > MAX_CHARS:
                 continue
         else:
-            if not raw_text.lower().startswith(COMMAND_PREFIX):
+            if REQUIRE_PREFIX and not raw_text.lower().startswith(COMMAND_PREFIX):
                 continue
             if text.lower().startswith(COMMAND_PREFIX):
                 text = text[len(COMMAND_PREFIX):].lstrip()
@@ -940,6 +942,7 @@ def start_http_server() -> None:
                     "tts_voice": server_voice,
                     "tts_mode": TTS_MODE,
                     "command_prefix": COMMAND_PREFIX,
+                    "require_prefix": REQUIRE_PREFIX,
                     "special_users": sorted(SPECIAL_USERS),
                     "cooldown_seconds": int(COOLDOWN_SECONDS),
                     "close_to_tray": bool(CONFIG.get("close_to_tray", True)),
@@ -992,7 +995,7 @@ def start_http_server() -> None:
         def _handle_config_save(self):
             """Persist configuration and apply the runtime-only parts immediately."""
             global CONFIG, server_voice, TTS_MODE
-            global TWITCH_CHANNEL, COMMAND_PREFIX, SPECIAL_USERS
+            global TWITCH_CHANNEL, COMMAND_PREFIX, REQUIRE_PREFIX, SPECIAL_USERS
             global COOLDOWN_SECONDS, MAX_CHARS, QUEUE_SIZE, AUDIO_ENABLED_BY_DEFAULT
             body = self._read_json_body()
             if not isinstance(body, dict):
@@ -1039,6 +1042,7 @@ def start_http_server() -> None:
             CONFIG = merged
             TWITCH_CHANNEL = str(merged.get("twitch_channel", TWITCH_CHANNEL))
             COMMAND_PREFIX = str(merged.get("command_prefix", COMMAND_PREFIX))
+            REQUIRE_PREFIX = bool(merged.get("require_prefix", REQUIRE_PREFIX))
             SPECIAL_USERS = {
                 str(user).lower()
                 for user in merged.get("special_users", [])

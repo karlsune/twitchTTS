@@ -4,6 +4,7 @@
   "stream_port": 8081,
   "tts_voice": "en-US-JennyNeural",
   "command_prefix": "!tts",
+  "require_prefix": true,
   "special_users": [],
   "cooldown_seconds": 3,
   "max_chars": 200,

@@ -26,9 +26,16 @@ def is_frozen() -> bool:
 
 
 def get_config_dir() -> str:
-    """Per-user data dir when frozen (Windows convention), repo dir otherwise."""
+    """Per-user data dir when frozen, repo dir otherwise.
+
+    Windows: ``%APPDATA%\TwitchTTS``. Linux/macOS: ``$XDG_CONFIG_HOME/TwitchTTS``
+    (default ``~/.config/TwitchTTS``).
+    """
     if is_frozen():
-        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        if os.name == "nt":
+            base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        else:
+            base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
         return os.path.join(base, APP_NAME)
     return os.path.dirname(os.path.abspath(__file__))
 

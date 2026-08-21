@@ -491,7 +491,20 @@ class TwitchTTSShell:
         add_row("Neural voice", voice_box)
 
         prefix_var = tk.StringVar(value=cfg.get("command_prefix", "!tts"))
-        add_row("Command prefix", ttk.Entry(frame, textvariable=prefix_var, width=28))
+        prefix_entry = ttk.Entry(frame, textvariable=prefix_var, width=28)
+        add_row("Command prefix", prefix_entry)
+
+        require_prefix_var = tk.BooleanVar(value=bool(cfg.get("require_prefix", True)))
+
+        def _toggle_prefix_entry() -> None:
+            prefix_entry.config(state="normal" if require_prefix_var.get() else "disabled")
+
+        require_prefix_var.trace_add("write", lambda *_: _toggle_prefix_entry())
+        _toggle_prefix_entry()
+        add_row(
+            "Require command prefix",
+            ttk.Checkbutton(frame, variable=require_prefix_var, command=_toggle_prefix_entry),
+        )
 
         cooldown_var = tk.StringVar(value=str(cfg.get("cooldown_seconds", 3)))
         add_row("Cooldown (seconds)", ttk.Spinbox(frame, from_=0, to=120, textvariable=cooldown_var, width=8))
@@ -522,7 +535,10 @@ class TwitchTTSShell:
 
         ttk.Label(
             frame,
-            text="All changes are saved to config.json and apply after restart. Use Save & Restart to apply them now.",
+            text=(
+                "Most settings apply immediately; channel, ports and audio "
+                "device need a restart (Save & Restart applies everything now)."
+            ),
             foreground="#666666",
         ).grid(row=len(rows), column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Label(
@@ -537,6 +553,7 @@ class TwitchTTSShell:
                 "twitch_channel": channel_var.get().strip(),
                 "tts_voice": by_label.get(voice_var.get(), voice_var.get()),
                 "command_prefix": prefix_var.get().strip() or "!tts",
+                "require_prefix": require_prefix_var.get(),
                 "cooldown_seconds": int(float(cooldown_var.get() or 0)),
                 "max_chars": int(float(maxchars_var.get() or 200)),
                 "special_users": special,

@@ -106,6 +106,28 @@ apply to host-audio playback only.
 Run `build.bat` → produces `dist/twitchTTS.exe`. The same binary hosts the
 engine via a hidden `--engine` flag.
 
+## Linux / headless server
+
+The engine (chat → TTS → SSE stream) runs on Linux; only the tray window,
+Windows SAPI voices and host-audio playback are Windows/desktop features.
+On a headless server, audio plays in the browser UI instead.
+
+```bash
+# installs a systemd user service (Ubuntu/Debian-ish):
+./install_linux.sh
+
+# logs:
+journalctl --user -u twitchtts -f
+```
+
+Config is `config.json` next to the sources (auto-created on first run).
+The engine binds to `127.0.0.1` — from another machine, use an SSH tunnel
+and open `http://localhost:8080/index.html`:
+
+```bash
+ssh -L 8080:localhost:8080 -L 8081:localhost:8081 user@server
+```
+
 ## Architecture
 
 - `app.py` — asyncio service: anonymous Twitch IRC, HTTP API (`http_port`),

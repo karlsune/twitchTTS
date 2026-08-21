@@ -1,0 +1,5 @@
+# Headless/server core for Linux. Host-audio playback (pygame-ce) and the
+# tray shell (pystray, pillow) are desktop features; the engine degrades
+# gracefully without them (audio falls back to the browser UI).
+edge-tts>=6.1.12
+miniaudio>=1.63
