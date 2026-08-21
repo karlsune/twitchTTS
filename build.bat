@@ -15,7 +15,6 @@ if exist ".venv\Scripts\python.exe" (
   --add-data "config.example.json;." ^
   --add-data "LICENSE.md;." ^
   --add-data "THIRD-PARTY-SOFTWARE.md;." ^
-  --add-data "NOTICE;." ^
   --hidden-import cffi ^
   --hidden-import _cffi_backend ^
   --hidden-import pystray._win32 ^

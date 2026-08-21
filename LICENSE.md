@@ -20,13 +20,3 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
----
-
-## Trademark notice
-
-"Twitch TTS", "Twitch TTS Engine", and the project logo are trademarks of the
-project maintainer (karlsune). The MIT license above grants no right to use
-these marks. You may not use them to endorse or promote products derived from
-this software, or in any way that suggests affiliation with or endorsement by
-the project, without prior written permission from the maintainer. Truthful
-referential use (for example, "a fork of Twitch TTS") remains permitted.

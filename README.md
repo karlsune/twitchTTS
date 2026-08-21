@@ -160,6 +160,4 @@ API routes (loopback-only): `/api/voices`, `/api/tts`, `/api/config` (GET/POST),
 ## License
 
 MIT — see [LICENSE.md](LICENSE.md). Bundled dependencies and their licenses
-are listed in [THIRD-PARTY-SOFTWARE.md](THIRD-PARTY-SOFTWARE.md). The
-"Twitch TTS" name and logo are trademarks of the maintainer — see
-[NOTICE](NOTICE).
+are listed in [THIRD-PARTY-SOFTWARE.md](THIRD-PARTY-SOFTWARE.md).
