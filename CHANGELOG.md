@@ -17,6 +17,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Garbled Unicode in the tray window (Now Playing placeholder, status dots)
   caused by double-encoded characters.
+- `close_to_tray` was ignored after restart on the frozen exe: the shell read
+  `config.json` next to the binary instead of `%APPDATA%\TwitchTTS`, so the
+  setting fell back to its default on every boot.
 
 ### Changed
 
