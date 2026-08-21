@@ -104,8 +104,16 @@ audio_state["volume"] = max(0.0, min(1.0, float(AUDIO_CONFIG.get("volume", 0.8))
 server_voice = DEFAULT_TTS_VOICE
 
 # TTS engine mode: "edge" (cloud neural) or "system" (Windows SAPI, offline).
+# System mode is Windows-only; fall back to edge elsewhere.
 TTS_MODE = str(CONFIG.get("tts_mode", "edge")).lower()
 if TTS_MODE not in ("edge", "system"):
+    TTS_MODE = "edge"
+if TTS_MODE == "system" and os.name != "nt":
+    print(
+        f"[{datetime.now().strftime('%H:%M:%S')}] "
+        "System TTS mode is Windows-only; falling back to edge",
+        flush=True,
+    )
     TTS_MODE = "edge"
 
 system_voices_cache: list[dict] | None = None
@@ -974,6 +982,9 @@ def start_http_server() -> None:
             mode = str(body.get("mode", TTS_MODE)).lower()
             if mode not in ("edge", "system"):
                 self.send_error(400, f"Unknown TTS mode: {mode}")
+                return
+            if mode == "system" and os.name != "nt":
+                self.send_error(400, "System TTS mode is Windows-only")
                 return
             mode_changed = mode != TTS_MODE
             TTS_MODE = mode

@@ -1,5 +1,8 @@
-# Headless/server core for Linux. Host-audio playback (pygame-ce) and the
-# tray shell (pystray, pillow) are desktop features; the engine degrades
-# gracefully without them (audio falls back to the browser UI).
+# Linux package. Core (edge TTS + audio decode) works headless; the tray
+# shell needs a desktop with an X display (and the python3-tk system
+# package, see install_linux.sh).
 edge-tts>=6.1.12
 miniaudio>=1.63
+pystray>=0.19
+pillow>=10.0
+python-xlib>=0.33

@@ -33,7 +33,10 @@ from config import get_config_path
 
 VERSION = "0.2.1"
 
-MODE_LABELS = {"Neural (edge-tts)": "edge", "System (offline)": "system"}
+MODE_LABELS = {"Neural (edge-tts)": "edge"}
+if os.name == "nt":
+    # Windows SAPI voices are the only offline engine; hide on other OSes.
+    MODE_LABELS["System (offline)"] = "system"
 MODE_KEYS = {key: label for label, key in MODE_LABELS.items()}
 # Next to the executable when frozen (PyInstaller), next to this file otherwise.
 BASE_DIR = os.path.dirname(

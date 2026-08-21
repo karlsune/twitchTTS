@@ -117,15 +117,21 @@ engine via a hidden `--engine` flag.
 
 ## Linux / headless server
 
-The engine (chat → TTS → SSE stream) runs on Linux; only the tray window,
-Windows SAPI voices and host-audio playback are Windows/desktop features.
-On a headless server, audio plays in the browser UI instead.
+The app runs on Linux: the full tray app on desktop (needs an X display,
+python3-tk and a tray backend), or a headless engine service on servers.
+Windows-only bits: SAPI system voices (the engine falls back to edge and
+the mode selector hides "System (offline)") and host-audio playback on
+headless machines (audio plays in the browser UI instead).
 
 ```bash
-# installs a systemd user service (Ubuntu/Debian-ish):
+# installs everything into a venv; on a headless box it also sets up a
+# systemd user service (Ubuntu/Debian-ish):
 ./install_linux.sh
 
-# logs:
+# desktop: run the tray app
+~/.local/share/twitchtts/venv/bin/python twitchtts_app.py
+
+# headless logs:
 journalctl --user -u twitchtts -f
 ```
 
