@@ -37,7 +37,12 @@ keep changes tight and consistent with the existing style.
 2. Make your change, keeping the diff minimal.
 3. Update `CHANGELOG.md` under an "Unreleased" heading.
 4. Open a PR against `master` and describe what changed and why.
-5. Be patient — this is a hobby project, reviews may take a while.
+5. Sign off your commits (Developer Certificate of Origin): append
+   `Signed-off-by: Your Name <you@example.com>` to each commit message
+   (`git commit -s`). This certifies you wrote the change or have the
+   right to contribute it under the project's MIT license. Contributions
+   are licensed to the project under the MIT License.
+6. Be patient — this is a hobby project, reviews may take a while.
 
 ## Reporting issues
 
