@@ -981,7 +981,9 @@ def start_http_server() -> None:
 
         def _handle_config_save(self):
             """Persist configuration and apply the runtime-only parts immediately."""
-            global server_voice, TTS_MODE
+            global CONFIG, server_voice, TTS_MODE
+            global TWITCH_CHANNEL, COMMAND_PREFIX, SPECIAL_USERS
+            global COOLDOWN_SECONDS, MAX_CHARS, QUEUE_SIZE, AUDIO_ENABLED_BY_DEFAULT
             body = self._read_json_body()
             if not isinstance(body, dict):
                 self.send_error(400, "Invalid config payload")
@@ -1020,6 +1022,24 @@ def start_http_server() -> None:
                 app_log(f"Could not save config: {exc}", level="error")
                 self.send_error(500, "Could not save config")
                 return
+
+            # Keep the in-memory config in sync with the file so that
+            # GET /api/config (read back by the shell's Options window)
+            # reports what was actually saved, not the boot-time values.
+            CONFIG = merged
+            TWITCH_CHANNEL = str(merged.get("twitch_channel", TWITCH_CHANNEL))
+            COMMAND_PREFIX = str(merged.get("command_prefix", COMMAND_PREFIX))
+            SPECIAL_USERS = {
+                str(user).lower()
+                for user in merged.get("special_users", [])
+                if isinstance(user, str)
+            }
+            COOLDOWN_SECONDS = float(merged.get("cooldown_seconds", COOLDOWN_SECONDS))
+            MAX_CHARS = int(merged.get("max_chars", MAX_CHARS))
+            merged_audio = merged.get("audio")
+            if isinstance(merged_audio, dict):
+                QUEUE_SIZE = max(1, int(merged_audio.get("queue_size", QUEUE_SIZE)))
+                AUDIO_ENABLED_BY_DEFAULT = bool(merged_audio.get("enabled", AUDIO_ENABLED_BY_DEFAULT))
 
             # Settings that can apply without a restart.
             if isinstance(merged.get("tts_voice"), str) and merged["tts_voice"].strip():

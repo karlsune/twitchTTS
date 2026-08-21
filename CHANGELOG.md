@@ -20,6 +20,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `close_to_tray` was ignored after restart on the frozen exe: the shell read
   `config.json` next to the binary instead of `%APPDATA%\TwitchTTS`, so the
   setting fell back to its default on every boot.
+- Options window showed stale values after saving: the engine persisted config
+  to disk but never updated its in-memory copy, so `/api/config` (which the
+  Options window reads back) reported the pre-save values until restart.
 
 ### Changed
 
